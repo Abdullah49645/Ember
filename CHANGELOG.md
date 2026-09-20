@@ -64,6 +64,7 @@ does not cover.
   leftover `ember_firms_key` from localStorage. Where `/api/firms` doesn't
   exist (file://, static hosting) the app falls back to the cached scenario and
   says so, as before.
+- **Methodology panel text.** Replaced the stale "runs fully offline" paragraph with an accurate live-vs-cached description (Open-Meteo and FIRMS live; terrain, land cover, roads procedural).
 - **Local dev.** `npm run dev` (`tools/dev-server.js`, no dependencies, no login) serves `apps/web` and mounts `api/firms.js`, reading `FIRMS_MAP_KEY` from `.env.local`.
 - **Config.** `vercel.json` (`outputDirectory: apps/web`), `.gitignore`
   (`.env*` except `.env.example`), `.env.example` rewritten.

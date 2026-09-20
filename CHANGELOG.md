@@ -1,6 +1,30 @@
 # Changelog
 
-Records significant changes in the project development
+## Pass 7 — FIRMS key server-side, methodology text, legend layout
+
+- **Why.** The FIRMS MAP_KEY used to be pasted into the Data Sources panel and
+  kept in each visitor's `localStorage` (per browser + per origin: it never
+  travelled with the code, but every visitor would have had to bring their own).
+  Hard-coding a key into `index.html` — or exposing it via a client-side "env
+  var" — would publish it to everyone (View Source), git or no git.
+- **What.** New `api/firms.js` (Vercel function) reads `process.env.FIRMS_MAP_KEY`,
+  validates the bounding box (numeric, 1 degree max), calls FIRMS, and returns
+  the CSV with `s-maxage=600` so concurrent users share one upstream call.
+  `fetchLiveFireDetections()` now calls same-origin `/api/firms?...`; the key
+  input, `getFirmsKey/setFirmsKey` and the Save button are gone, replaced by a
+  note that EMBER's own key is in use. A one-line cleanup removes any
+  leftover `ember_firms_key` from localStorage. Where `/api/firms` doesn't
+  exist (file://, static hosting) the app falls back to the cached scenario and
+  says so, as before.
+- **Methodology panel text.** Replaced the stale "runs fully offline" paragraph with an accurate live-vs-cached description (Open-Meteo and FIRMS live; terrain, land cover, roads procedural).
+- **Legend / zoom overlap.** The status legend sat under the +/−/reset zoom buttons at the bottom-right of the map; the legend is now offset left of them (and wraps on narrow maps).
+- **Local dev.** `npm run dev` (`tools/dev-server.js`, no dependencies, no login) serves `apps/web` and mounts `api/firms.js`, reading `FIRMS_MAP_KEY` from `.env.local`.
+- **Config.** `vercel.json` (`outputDirectory: apps/web`), `.gitignore`
+  (`.env*` except `.env.example`), `.env.example` rewritten.
+- **Tests.** +2 behaviour checks (proxy URL has no key; CSV -> ignition cells;
+  proxy errors surface honestly) and `tools/firms-proxy.test.js` (5 checks: key
+  never in any response/header, 503 when unset, bad/oversized boxes rejected
+  before any upstream call, GET only, errors uncached).
 
 ## Pass 6 — black-terrain fix (colour pipeline) + duplicate terrain repaint
 
@@ -42,31 +66,6 @@ Records significant changes in the project development
   canvas 100% near-black with a single fillStyle `rgb(0,0,0)`; post-fix 0%
   near-black, 368 distinct colours, contours present, 1 terrain paint on entry
   (was 2), 0 repaints while the simulation runs.
-
-## Pass 7 — FIRMS key moved server-side (no key in the browser)
-
-- **Why.** The FIRMS MAP_KEY used to be pasted into the Data Sources panel and
-  kept in each visitor's `localStorage` (per browser + per origin: it never
-  travelled with the code, but every visitor would have had to bring their own).
-  Hard-coding a key into `index.html` — or exposing it via a client-side "env
-  var" — would publish it to everyone (View Source), git or no git.
-- **What.** New `api/firms.js` (Vercel function) reads `process.env.FIRMS_MAP_KEY`,
-  validates the bounding box (numeric, 1 degree max), calls FIRMS, and returns
-  the CSV with `s-maxage=600` so concurrent users share one upstream call.
-  `fetchLiveFireDetections()` now calls same-origin `/api/firms?...`; the key
-  input, `getFirmsKey/setFirmsKey` and the Save button are gone, replaced by a
-  note that EMBER's own key is in use. A one-line cleanup removes any
-  leftover `ember_firms_key` from localStorage. Where `/api/firms` doesn't
-  exist (file://, static hosting) the app falls back to the cached scenario and
-  says so, as before.
-- **Methodology panel text.** Replaced the stale "runs fully offline" paragraph with an accurate live-vs-cached description (Open-Meteo and FIRMS live; terrain, land cover, roads procedural).
-- **Local dev.** `npm run dev` (`tools/dev-server.js`, no dependencies, no login) serves `apps/web` and mounts `api/firms.js`, reading `FIRMS_MAP_KEY` from `.env.local`.
-- **Config.** `vercel.json` (`outputDirectory: apps/web`), `.gitignore`
-  (`.env*` except `.env.example`), `.env.example` rewritten.
-- **Tests.** +2 behaviour checks (proxy URL has no key; CSV -> ignition cells;
-  proxy errors surface honestly) and `tools/firms-proxy.test.js` (5 checks: key
-  never in any response/header, 503 when unset, bad/oversized boxes rejected
-  before any upstream call, GET only, errors uncached).
 
 ## Pass 5 — live-demo UI fixes (map zoom/pan, feed panel, terrain visibility)
 

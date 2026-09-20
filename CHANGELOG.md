@@ -1,11 +1,6 @@
 # Changelog
 
-This project passes between Claude sessions as a ZIP handoff, so this file
-exists to save the next session from rediscovering what's already been found
-and fixed. Entries are grouped by session pass, most recent first. Each item
-notes what was actually verified (headless behavioural test, or static
-inspection) — see `README.md` § Testing for what the test suite does and
-does not cover.
+Records significant changes in the project devlopment
 
 ## Pass 6 — black-terrain fix (colour pipeline) + duplicate terrain repaint
 

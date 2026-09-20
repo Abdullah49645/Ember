@@ -1,6 +1,6 @@
 # Changelog
 
-Records significant changes in the project devlopment
+Records significant changes in the project development
 
 ## Pass 6 — black-terrain fix (colour pipeline) + duplicate terrain repaint
 

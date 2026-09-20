@@ -1,0 +1,3271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>EMBER — Wildfire Propagation &amp; Evacuation Simulation</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#0a0d10;
+    --bg-raised:#10151a;
+    --bg-raised-2:#141a20;
+    --line:rgba(255,255,255,0.08);
+    --line-strong:rgba(255,255,255,0.16);
+    --text:#e7ecef;
+    --text-dim:#8a96a0;
+    --text-faint:#576068;
+    --fire:#ff6b35;
+    --ember:#ffb020;
+    --safe:#2fd98a;
+    --watch:#f5c244;
+    --blocked:#ff4757;
+    --water:#3e8fff;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--sans); font-size:13px; overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* ---------- ACCESSIBILITY: FOCUS + REDUCED MOTION ---------- */
+  :focus{ outline:none; }
+  :focus-visible{
+    outline:2px solid var(--fire); outline-offset:2px; border-radius:3px;
+  }
+  input[type=range]:focus-visible{ outline-offset:4px; }
+  .sr-only{
+    position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+    overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important; }
+    .road-row.pulse{ animation:none !important; box-shadow:none !important; border-color:var(--fire) !important; }
+  }
+  .label{
+    font-size:10px; letter-spacing:0.09em; text-transform:uppercase;
+    color:var(--text-faint); font-weight:600;
+  }
+  .mono{font-family:var(--mono);}
+  button{font-family:var(--sans); cursor:pointer;}
+  ::-webkit-scrollbar{width:6px;height:6px;}
+  ::-webkit-scrollbar-thumb{background:var(--line-strong); border-radius:3px;}
+
+  #app{
+    height:100vh; display:flex; flex-direction:column;
+  }
+
+  /* ---------- TOP BAR ---------- */
+  #topbar{
+    height:48px; flex:0 0 48px; display:flex; align-items:center;
+    padding:0 14px; border-bottom:1px solid var(--line); background:var(--bg-raised);
+    gap:16px; z-index:50;
+  }
+  #wordmark{ display:flex; align-items:center; gap:8px; }
+  #wordmark .mark{
+    width:16px;height:16px;border-radius:3px;
+    background:radial-gradient(circle at 35% 30%, var(--ember), var(--fire) 60%, #7a1f00 100%);
+    box-shadow:0 0 8px rgba(255,107,53,0.7);
+  }
+  #wordmark .name{font-weight:700; font-size:14px; letter-spacing:0.02em;}
+  .pill{
+    font-size:10px; letter-spacing:0.08em; text-transform:uppercase;
+    padding:3px 7px; border-radius:3px; border:1px solid var(--line-strong);
+    color:var(--text-dim); display:flex; align-items:center; gap:5px; white-space:nowrap;
+  }
+  .dot{width:6px;height:6px;border-radius:50%; display:inline-block;}
+  .dot.on{background:var(--safe); box-shadow:0 0 5px var(--safe);}
+  .dot.off{background:var(--text-faint);}
+  .dot.warn{background:var(--watch); box-shadow:0 0 5px var(--watch);}
+  #scenario-name{
+    flex:1; text-align:center; font-size:11px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--text-dim);
+  }
+  #scenario-name b{color:var(--text); font-weight:700;}
+  .topbtns{display:flex; gap:6px; align-items:center;}
+  .icon-btn{
+    width:28px;height:28px; border-radius:4px; border:1px solid var(--line);
+    background:transparent; color:var(--text-dim); display:flex; align-items:center;
+    justify-content:center; font-size:13px; transition:.12s;
+  }
+  .icon-btn:hover{ background:var(--bg-raised-2); color:var(--text); border-color:var(--line-strong); }
+  .icon-btn.active{ color:var(--fire); border-color:rgba(255,107,53,0.5); background:rgba(255,107,53,0.08);}
+
+  /* ---------- MAIN LAYOUT ---------- */
+  #main{ flex:1; display:flex; min-height:0; }
+  #left{
+    width:220px; flex:0 0 220px; border-right:1px solid var(--line);
+    background:var(--bg-raised); overflow-y:auto; padding:12px;
+  }
+  #right{
+    width:290px; flex:0 0 290px; border-left:1px solid var(--line);
+    background:var(--bg-raised); overflow-y:auto; display:flex; flex-direction:column;
+  }
+  #center{ flex:1; position:relative; min-width:0; display:flex; flex-direction:column; }
+  #mapwrap{ flex:1; position:relative; overflow:hidden; background:#05070a;}
+  /* Everything that should pan/zoom together (the 4 canvases) lives inside
+     #mapstage, which gets a CSS transform. HUD/legend/toast/zoom-controls
+     stay direct children of #mapwrap so they never move or scale. */
+  #mapstage{ position:absolute; inset:0; transform-origin:0 0; }
+  canvas{ position:absolute; top:0; left:0; }
+  #mapstage.panning{ cursor:grabbing; }
+  #zoom-controls{
+    position:absolute; right:14px; bottom:14px; z-index:30; display:flex; flex-direction:column; gap:2px;
+    background:rgba(10,13,16,0.85); border:1px solid var(--line-strong); border-radius:6px; overflow:hidden;
+  }
+  #zoom-controls button{
+    width:30px; height:30px; background:transparent; border:none; border-bottom:1px solid var(--line);
+    color:var(--text); font-size:16px; font-family:var(--mono); cursor:pointer; line-height:1;
+  }
+  #zoom-controls button:last-child{ border-bottom:none; font-size:13px; }
+  #zoom-controls button:hover{ background:rgba(255,255,255,0.08); }
+
+  /* ---------- LEFT PANEL ---------- */
+  .block{ margin-bottom:16px; }
+  .block-title{
+    font-size:10px; letter-spacing:0.1em; text-transform:uppercase;
+    color:var(--text-faint); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;
+  }
+  .status-line{
+    display:flex; align-items:center; gap:6px; font-size:11px; margin-bottom:10px;
+    padding:6px 8px; border:1px solid var(--line); border-radius:4px; background:rgba(255,255,255,0.02);
+  }
+  .metric-row{
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:5px 0; border-bottom:1px solid rgba(255,255,255,0.04);
+  }
+  .metric-row .k{ font-size:10.5px; letter-spacing:0.06em; color:var(--text-dim); text-transform:uppercase; }
+  .metric-row .v{ font-family:var(--mono); font-size:14px; font-weight:600; }
+  .metric-row .v.fire{color:var(--fire);}
+  .metric-row .v.blocked{color:var(--blocked);}
+  .metric-row .v.safe{color:var(--safe);}
+
+  .env-grid{ display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .env-card{
+    border:1px solid var(--line); border-radius:4px; padding:8px; background:rgba(255,255,255,0.02);
+  }
+  .env-card .k{font-size:9.5px; color:var(--text-faint); letter-spacing:0.08em; text-transform:uppercase;}
+  .env-card .v{font-family:var(--mono); font-size:15px; margin-top:3px; font-weight:600;}
+  .env-card .sub{font-size:10px; color:var(--text-dim); margin-top:1px;}
+
+  #compass{ width:56px; height:56px; margin:4px auto 2px; position:relative; }
+
+  /* ---------- RIGHT PANEL ---------- */
+  .rp-section{ border-bottom:1px solid var(--line); padding:12px; }
+  #rp-resizer{
+    height:9px; flex:0 0 9px; cursor:row-resize; position:relative;
+    background:var(--bg-raised); border-bottom:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center;
+  }
+  #rp-resizer:hover, #rp-resizer.active{ background:rgba(255,255,255,0.05); }
+  #rp-resizer:focus-visible{ outline:2px solid var(--water); outline-offset:-2px; }
+  .rp-resizer-grip{ width:28px; height:3px; border-radius:2px; background:var(--line-strong); }
+  #rp-resizer:hover .rp-resizer-grip, #rp-resizer.active .rp-resizer-grip{ background:var(--text-dim); }
+  .road-row{
+    display:flex; flex-direction:column; gap:2px; padding:7px 8px; margin-bottom:6px;
+    border:1px solid var(--line); border-radius:4px; cursor:pointer; transition:.12s;
+    background:rgba(255,255,255,0.015);
+  }
+  .road-row:hover{ border-color:var(--line-strong); background:rgba(255,255,255,0.035); }
+  .road-row .top{ display:flex; justify-content:space-between; align-items:center; }
+  .road-row .name{ font-size:11.5px; font-weight:600; }
+  .road-row.pulse{ animation:roadPulse 1.7s ease-out 1; }
+  @keyframes roadPulse{
+    0%{ box-shadow:0 0 0 0 var(--pulse-color, rgba(255,107,53,0.55)); border-color:var(--pulse-color, var(--fire)); }
+    65%{ box-shadow:0 0 0 9px rgba(255,107,53,0); }
+    100%{ box-shadow:0 0 0 0 rgba(255,107,53,0); }
+  }
+  .badge{
+    font-size:9px; letter-spacing:0.06em; padding:2px 6px; border-radius:3px; font-weight:700;
+    text-transform:uppercase;
+  }
+  .badge.SAFE{ background:rgba(47,217,138,0.14); color:var(--safe); }
+  .badge.WATCH{ background:rgba(245,194,68,0.16); color:var(--watch); }
+  .badge.THREATENED{ background:rgba(255,107,53,0.16); color:var(--fire); }
+  .badge.BLOCKED{ background:rgba(255,71,87,0.18); color:var(--blocked); }
+  .road-row .meta{ font-size:10px; color:var(--text-dim); font-family:var(--mono); }
+
+  #feed{ flex:1; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column-reverse; gap:6px;}
+  .feed-item{
+    font-size:11px; border-left:2px solid var(--line-strong); padding:4px 0 4px 8px; color:var(--text-dim);
+    animation:fadein .25s ease;
+  }
+  .feed-item .t{ font-family:var(--mono); font-size:9.5px; color:var(--text-faint); margin-right:6px;}
+  .feed-item.event{ border-left-color:var(--fire); color:var(--text); }
+  .feed-item.route{ border-left-color:var(--water); color:var(--text); }
+  .feed-item.system{ border-left-color:var(--text-faint); }
+  @keyframes fadein{ from{opacity:0; transform:translateY(3px);} to{opacity:1;} }
+
+  /* ---------- BOTTOM TIMELINE ---------- */
+  #timeline{
+    flex:0 0 78px; border-top:1px solid var(--line); background:var(--bg-raised);
+    display:flex; align-items:center; padding:0 16px; gap:16px;
+  }
+  .tbtn{
+    background:var(--bg-raised-2); border:1px solid var(--line); color:var(--text);
+    border-radius:4px; width:30px; height:30px; display:flex; align-items:center; justify-content:center; font-size:13px;
+  }
+  .tbtn:hover{border-color:var(--line-strong);}
+  .tbtn.play{ width:36px;height:36px; color:var(--fire); border-color:rgba(255,107,53,0.4);}
+  #speedgroup{ display:flex; gap:3px; }
+  .speedbtn{
+    background:transparent; border:1px solid var(--line); color:var(--text-dim); font-family:var(--mono);
+    font-size:10.5px; padding:4px 7px; border-radius:3px;
+  }
+  .speedbtn.active{ color:var(--fire); border-color:rgba(255,107,53,0.5); background:rgba(255,107,53,0.08); }
+  #tl-track-wrap{ flex:1; position:relative; height:36px; }
+  #tl-track{
+    position:absolute; left:0; right:0; top:16px; height:4px; background:var(--line-strong); border-radius:2px;
+  }
+  #tl-progress{ position:absolute; left:0; top:16px; height:4px; background:var(--fire); border-radius:2px; width:0%;}
+  #tl-history{ position:absolute; left:0; top:16px; height:4px; background:rgba(255,107,53,0.28); border-radius:2px; width:0%;}
+  #tl-handle{
+    position:absolute; top:9px; width:14px; height:14px; border-radius:50%; background:var(--fire);
+    box-shadow:0 0 6px rgba(255,107,53,0.8); transform:translateX(-7px); cursor:grab;
+  }
+  .tl-ticks{ position:absolute; left:0; right:0; top:24px; display:flex; justify-content:space-between; font-family:var(--mono); font-size:9px; color:var(--text-faint); }
+  /* Event markers over the timeline track, positioned by real simulated
+     minute so the scrubber becomes navigable instead of a blind drag. */
+  #tl-events{ position:absolute; left:0; right:0; top:12px; height:12px; pointer-events:none; }
+  .tl-marker{
+    position:absolute; top:0; width:2px; height:12px; transform:translateX(-1px);
+    background:var(--text-dim); pointer-events:auto; cursor:pointer; border-radius:1px;
+  }
+  .tl-marker:hover{ width:3px; height:14px; top:-1px; }
+  .tl-marker.event{ background:var(--fire); }
+  .tl-marker.route{ background:var(--water); }
+  .tl-marker.firebreak{ background:#7effc6; }
+  .tl-marker.system{ background:var(--text-faint); height:8px; top:2px; }
+  #tl-elapsed{ font-family:var(--mono); font-size:13px; font-weight:700; color:var(--fire); min-width:78px; text-align:right;}
+
+  /* ---------- FLOATING PANELS ---------- */
+  .floater{
+    position:absolute; background:var(--bg-raised); border:1px solid var(--line-strong);
+    border-radius:6px; box-shadow:0 10px 40px rgba(0,0,0,0.55); z-index:40; overflow:hidden;
+  }
+  .floater-head{
+    display:flex; justify-content:space-between; align-items:center; padding:9px 12px;
+    border-bottom:1px solid var(--line); font-size:11px; letter-spacing:0.06em; text-transform:uppercase;
+    color:var(--text-dim); font-weight:700;
+  }
+  .floater-head .x{ cursor:pointer; color:var(--text-faint); font-size:14px; background:transparent; border:none; padding:2px 4px; border-radius:3px; line-height:1; }
+  .floater-head .x:hover{ color:var(--text); }
+  .floater-body{ padding:12px; max-height:70vh; overflow-y:auto; }
+
+  #drawer{ top:56px; right:298px; width:280px; display:none; }
+  #inspector{ top:56px; right:298px; width:280px; display:none; }
+  #about{ top:70px; left:50%; transform:translateX(-50%); width:480px; display:none; }
+  #layerpanel{ top:56px; left:228px; width:230px; display:none; }
+  #datastatus{ top:56px; left:50%; transform:translateX(-50%); width:320px; display:none; }
+
+  .field{ margin-bottom:12px; }
+  .field .flabel{ display:flex; justify-content:space-between; font-size:10.5px; color:var(--text-dim); margin-bottom:5px; text-transform:uppercase; letter-spacing:0.05em;}
+  .field .flabel .val{ font-family:var(--mono); color:var(--text); font-weight:700; }
+  input[type=range]{
+    -webkit-appearance:none; width:100%; height:3px; background:var(--line-strong); border-radius:2px; outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; width:13px;height:13px;border-radius:50%; background:var(--fire); cursor:pointer;
+    box-shadow:0 0 5px rgba(255,107,53,0.8);
+  }
+  .subtle-btn{
+    width:100%; padding:8px; border-radius:4px; border:1px solid var(--line-strong); background:var(--bg-raised-2);
+    color:var(--text); font-size:11px; letter-spacing:0.04em; text-transform:uppercase; font-weight:700; margin-top:4px;
+  }
+  .subtle-btn:hover{ border-color:var(--fire); color:var(--fire); }
+  .subtle-btn.danger:hover{ border-color:var(--blocked); color:var(--blocked); }
+  .subtle-btn.primary{ background:rgba(255,107,53,0.12); border-color:rgba(255,107,53,0.5); color:var(--fire); }
+  .chk-row{ display:flex; align-items:center; gap:8px; padding:5px 0; font-size:11.5px; }
+  .chk-row input{ accent-color:var(--fire); }
+  .layer-group-title{ font-size:9.5px; color:var(--text-faint); letter-spacing:0.08em; text-transform:uppercase; margin:10px 0 2px; }
+  .kv{ display:flex; justify-content:space-between; font-size:11.5px; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.05);}
+  .kv .k{color:var(--text-dim);}
+  .kv .v{font-family:var(--mono); font-weight:600;}
+  .why-list{ margin:8px 0 0; padding-left:16px; font-size:11.5px; color:var(--text-dim); line-height:1.6;}
+  .src-row{display:flex; justify-content:space-between; align-items:center; font-size:11px; padding:6px 0; border-bottom:1px solid rgba(255,255,255,0.05);}
+
+  /* map overlays */
+  #maphud{ position:absolute; top:10px; left:10px; display:flex; flex-direction:column; gap:6px; z-index:20; pointer-events:none;}
+  #maphud .badge2{
+    pointer-events:auto; font-family:var(--mono); font-size:10px; letter-spacing:0.06em; padding:4px 8px;
+    border:1px solid var(--line-strong); border-radius:3px; background:rgba(10,13,16,0.75); color:var(--text-dim);
+  }
+  #corner-toast{
+    /* Sits above .floater(40) and #topbar(50) but below #welcome(150)/#boot(200),
+       so route/firebreak confirmations are never occluded by an open panel. */
+    position:absolute; bottom:14px; left:14px; z-index:120; display:flex; flex-direction:column; gap:6px; max-width:340px;
+  }
+  .toast{
+    background:rgba(10,13,16,0.92); border:1px solid var(--line-strong); border-left:3px solid var(--fire);
+    border-radius:4px; padding:8px 10px; font-size:11.5px; animation:toastin .3s ease;
+    box-shadow:0 6px 24px rgba(0,0,0,0.4);
+  }
+  .toast .tt{ font-weight:700; letter-spacing:0.04em; text-transform:uppercase; font-size:10.5px; margin-bottom:2px;}
+  .toast.route{ border-left-color:var(--water); }
+  .toast.firebreak{ border-left-color:var(--safe); }
+  @keyframes toastin{ from{opacity:0; transform:translateX(-8px);} to{opacity:1;} }
+
+  #legend{
+    position:absolute; bottom:10px; right:10px; z-index:20; background:rgba(10,13,16,0.8);
+    border:1px solid var(--line-strong); border-radius:4px; padding:8px 10px; font-size:10px; color:var(--text-dim);
+    display:flex; gap:12px;
+  }
+  #legend .li{ display:flex; align-items:center; gap:5px; }
+  #legend .sw{ width:9px; height:9px; border-radius:2px; }
+
+  #firebreak-hint{
+    position:absolute; top:10px; left:50%; transform:translateX(-50%); z-index:22;
+    background:rgba(47,217,138,0.14); border:1px solid var(--safe); color:var(--safe);
+    font-size:11px; padding:6px 12px; border-radius:4px; font-weight:600; display:none;
+  }
+
+  /* ---------- LOADING ---------- */
+  #boot{
+    position:fixed; inset:0; background:var(--bg); z-index:200; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:18px;
+  }
+  #boot .mk{ width:38px;height:38px;border-radius:8px;
+    background:radial-gradient(circle at 35% 30%, var(--ember), var(--fire) 60%, #7a1f00 100%);
+    box-shadow:0 0 26px rgba(255,107,53,0.55); }
+  #boot .bn{ font-size:20px; font-weight:800; letter-spacing:0.03em; }
+  #boot .checklist{ width:280px; font-family:var(--mono); font-size:12px; }
+  #boot .cl-item{ display:flex; justify-content:space-between; padding:4px 0; color:var(--text-faint); opacity:0.4; transition:.2s;}
+  #boot .cl-item.done{ opacity:1; color:var(--text-dim);}
+  #boot .cl-item.done .ck{ color:var(--safe); }
+  #boot .foot{ font-size:10px; color:var(--text-faint); letter-spacing:0.08em; text-transform:uppercase; }
+  #boot.hide{ animation:bootout .4s ease forwards; }
+  @keyframes bootout{ to{opacity:0; visibility:hidden;} }
+
+  #welcome{
+    position:fixed; inset:0; background:rgba(5,7,10,0.86); z-index:150; display:flex; align-items:center; justify-content:center;
+    backdrop-filter: blur(3px);
+  }
+  #welcome .card{ text-align:center; max-width:420px; }
+  #welcome .mk{ width:44px;height:44px;border-radius:9px; margin:0 auto 18px;
+    background:radial-gradient(circle at 35% 30%, var(--ember), var(--fire) 60%, #7a1f00 100%);
+    box-shadow:0 0 30px rgba(255,107,53,0.6); }
+  #welcome h1{ font-size:26px; margin:0 0 6px; letter-spacing:0.01em;}
+  #welcome p.tag{ color:var(--text-dim); font-size:12.5px; letter-spacing:0.14em; text-transform:uppercase; margin:0 0 26px;}
+  #welcome button{
+    background:var(--fire); border:none; color:#1a0a02; font-weight:800; padding:11px 26px; border-radius:5px;
+    font-size:12.5px; letter-spacing:0.05em; text-transform:uppercase;
+  }
+  #welcome button:hover{ background:var(--ember); }
+
+  .tooltip-hint{ position:absolute; z-index:60; background:rgba(10,13,16,0.95); border:1px solid var(--line-strong);
+    border-radius:4px; padding:6px 9px; font-size:10.5px; pointer-events:none; display:none; max-width:220px; }
+</style>
+</head>
+<body>
+
+<div id="boot" role="status" aria-live="polite">
+  <div class="mk"></div>
+  <div class="bn">EMBER INITIALIZATION</div>
+  <div class="checklist" id="boot-list"></div>
+  <div class="foot">Environment → Fire → Infrastructure</div>
+</div>
+
+<div id="app" style="display:none;">
+
+  <div id="topbar">
+    <div id="wordmark"><div class="mark"></div><div class="name">EMBER</div></div>
+    <div class="pill"><span class="dot on" id="dot-live"></span><span id="live-label">CACHED SCENARIO</span></div>
+    <div class="pill"><span class="dot warn"></span>SIMULATION • NOT AN OPERATIONAL FORECAST</div>
+    <div id="scenario-name" style="cursor:pointer;" title="Change location"><b>Los Padres Ridge Corridor</b> · Demo Scenario ▾</div>
+    <div class="topbtns">
+      <button class="icon-btn" id="btn-compare" title="Scenario comparison" aria-label="Scenario comparison">⇄</button>
+      <button class="icon-btn" id="btn-data" title="Data sources" aria-label="Data sources">◈</button>
+      <button class="icon-btn" id="btn-layers" title="Layers (L)" aria-label="Map layers">▤</button>
+      <button class="icon-btn" id="btn-drawer" title="Scenario controls (E)" aria-label="Environment controls">⚙</button>
+      <button class="icon-btn" id="btn-about" title="Methodology" aria-label="Methodology and help">ⓘ</button>
+      <button class="icon-btn" id="btn-reset" title="Restart scenario (R)" aria-label="Restart scenario">⟲</button>
+      <button class="icon-btn" id="btn-fullscreen" title="Fullscreen" aria-label="Toggle fullscreen">⤢</button>
+    </div>
+  </div>
+
+  <div id="main">
+
+    <div id="left">
+      <div class="block">
+        <div class="status-line" role="status" aria-live="polite"><span class="dot on" id="dot-sim" aria-hidden="true"></span><span id="sim-status-text" style="font-weight:700; letter-spacing:0.04em;">SIMULATION ACTIVE</span></div>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Incident Metrics</div>
+        <div class="metric-row"><span class="k">Fire Fronts</span><span class="v fire" id="m-fronts">0</span></div>
+        <div class="metric-row"><span class="k">Roads Threatened</span><span class="v" id="m-roads">0</span></div>
+        <div class="metric-row"><span class="k">Communities Affected</span><span class="v" id="m-comm">0</span></div>
+        <div class="metric-row"><span class="k">Routes Active</span><span class="v safe" id="m-routes">0</span></div>
+        <div class="metric-row"><span class="k">Simulation</span><span class="v" id="m-simtime">+00:00</span></div>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Environmental Conditions</div>
+        <div id="compass"></div>
+        <div class="env-grid">
+          <div class="env-card"><div class="k">Wind</div><div class="v" id="e-winddir">NW→SE</div><div class="sub" id="e-windspd">24 km/h</div></div>
+          <div class="env-card"><div class="k">Temperature</div><div class="v" id="e-temp">34°C</div><div class="sub">Ambient</div></div>
+          <div class="env-card"><div class="k">Humidity</div><div class="v" id="e-hum">18%</div><div class="sub" id="e-dryness">Fuel: DRY</div></div>
+          <div class="env-card"><div class="k">Spread ×</div><div class="v" id="e-spreadmult">1.0×</div><div class="sub">Multiplier</div></div>
+        </div>
+      </div>
+
+      <div class="block">
+        <div class="block-title">Data Sources</div>
+        <div id="mini-sources" style="font-size:10.5px; color:var(--text-dim); line-height:1.9;"></div>
+      </div>
+    </div>
+
+    <div id="center">
+      <div id="mapwrap">
+        <div id="mapstage">
+          <canvas id="canvas-terrain"></canvas>
+          <canvas id="canvas-fire"></canvas>
+          <canvas id="canvas-infra"></canvas>
+          <canvas id="canvas-interact"></canvas>
+        </div>
+        <div id="maphud">
+          <div class="badge2" id="hud-mode">CACHED SCENARIO</div>
+          <div class="badge2" id="hud-thermal" style="display:none; border-color:rgba(200,120,255,0.55); color:#e2b8ff;">EXPERIMENTAL — THERMAL PROXY (NOT LIVE LANDSAT)</div>
+        </div>
+        <div id="firebreak-hint">DRAW MODE — click and drag across the terrain to deploy a firebreak</div>
+        <div id="zoom-controls" role="group" aria-label="Map zoom">
+          <button id="btn-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+          <button id="btn-zoom-out" title="Zoom out" aria-label="Zoom out">−</button>
+          <button id="btn-zoom-reset" title="Reset view" aria-label="Reset zoom and pan">⤾</button>
+        </div>
+        <div id="legend">
+          <div class="li"><span class="sw" style="background:var(--fire);"></span>Active fire</div>
+          <div class="li"><span class="sw" style="background:#3a2a20;"></span>Burned</div>
+          <div class="li"><span class="sw" style="background:var(--ember);"></span>Spot ignition</div>
+          <div class="li"><span class="sw" style="background:var(--safe);"></span>Safe route</div>
+          <div class="li"><span class="sw" style="background:var(--watch);"></span>Threatened</div>
+          <div class="li"><span class="sw" style="background:var(--blocked);"></span>Blocked</div>
+        </div>
+        <div id="corner-toast" role="status" aria-live="polite"></div>
+      </div>
+    </div>
+
+    <div id="right">
+      <div class="rp-section" id="rp-network" style="flex:0 0 auto; overflow-y:auto; max-height:38%;">
+        <div class="block-title" style="margin-bottom:8px;">Network Status</div>
+        <div id="road-list"></div>
+      </div>
+      <div id="rp-resizer" title="Drag to resize" role="separator" aria-orientation="horizontal" aria-label="Resize Network Status / Intelligence Feed panels" tabindex="0"><div class="rp-resizer-grip"></div></div>
+      <div class="rp-section" style="flex:1; display:flex; flex-direction:column; padding:0; border-bottom:none; min-height:0;">
+        <div class="block-title" style="padding:12px 12px 0;">Intelligence Feed</div>
+        <div id="feed" role="log" aria-live="polite" aria-relevant="additions"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="timeline">
+    <button class="tbtn" id="btn-reset2" title="Reset (R)" aria-label="Reset scenario">⟲</button>
+    <button class="tbtn play" id="btn-playpause" title="Play/Pause (Space)" aria-label="Play or pause simulation" aria-pressed="false">▶</button>
+    <button class="tbtn" id="btn-step" title="Step forward (→)" aria-label="Step simulation forward">⏭</button>
+    <div id="speedgroup" role="group" aria-label="Playback speed"></div>
+    <div id="tl-track-wrap" role="slider" aria-label="Simulation timeline" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" tabindex="0">
+      <div id="tl-track"></div>
+      <div id="tl-history"></div>
+      <div id="tl-progress"></div>
+      <div id="tl-events"></div>
+      <div id="tl-handle"></div>
+      <div class="tl-ticks"></div>
+    </div>
+    <div id="tl-elapsed">+00:00</div>
+    <button class="subtle-btn primary" id="btn-demo" style="width:auto; padding:8px 14px; margin:0;" title="Run guided demo (D)" aria-label="Run guided demo">Run Demo</button>
+    <button class="subtle-btn" id="btn-firebreak" style="width:auto; padding:8px 14px; margin:0;" aria-label="Draw a firebreak on the map" aria-pressed="false">Add Firebreak</button>
+  </div>
+</div>
+
+<!-- Scenario controls drawer -->
+<div class="floater" id="drawer">
+  <div class="floater-head"><span>Scenario Controls</span><button class="x" data-close="drawer" aria-label="Close panel">✕</button></div>
+  <div class="floater-body">
+    <div class="layer-group-title">Environment</div>
+    <div class="field"><div class="flabel"><span>Wind Direction</span><span class="val" id="lbl-winddir">315°</span></div><input type="range" id="in-winddir" min="0" max="359" value="315"></div>
+    <div class="field"><div class="flabel"><span>Wind Speed</span><span class="val" id="lbl-windspd">24 km/h</span></div><input type="range" id="in-windspd" min="0" max="80" value="24"></div>
+    <div class="field"><div class="flabel"><span>Humidity</span><span class="val" id="lbl-hum">18%</span></div><input type="range" id="in-hum" min="0" max="100" value="18"></div>
+    <div class="field"><div class="flabel"><span>Temperature</span><span class="val" id="lbl-temp">34°C</span></div><input type="range" id="in-temp" min="0" max="48" value="34"></div>
+    <div class="layer-group-title">Fire Model</div>
+    <div class="field"><div class="flabel"><span>Spread Multiplier</span><span class="val" id="lbl-spreadmult">1.0×</span></div><input type="range" id="in-spreadmult" min="50" max="200" value="100"></div>
+    <div class="field"><div class="flabel"><span>Spot-fire Probability</span><span class="val" id="lbl-spot">35%</span></div><input type="range" id="in-spot" min="0" max="100" value="35"></div>
+    <div class="layer-group-title">Simulation</div>
+    <button class="subtle-btn" id="btn-randomize">Randomize Seed</button>
+    <div class="field" style="margin-top:10px;">
+      <div class="flabel"><span>Snapshot name</span></div>
+      <input type="text" id="in-snapname" placeholder="e.g. Wind shift 38 km/h" style="width:100%; background:var(--bg-raised-2); border:1px solid var(--line-strong); border-radius:4px; color:var(--text); padding:7px 8px; font-size:11.5px;">
+    </div>
+    <button class="subtle-btn" id="btn-save">Save Scenario Snapshot</button>
+    <div id="snapshot-list" style="margin-top:8px;"></div>
+  </div>
+</div>
+
+<!-- Location picker -->
+<div class="floater" id="locationpanel" style="top:56px; left:50%; transform:translateX(-50%); width:340px; display:none;">
+  <div class="floater-head"><span>Choose Location</span><button class="x" data-close="locationpanel" aria-label="Close panel">✕</button></div>
+  <div class="floater-body" id="location-list"></div>
+</div>
+
+<!-- Scenario comparison -->
+<div class="floater" id="comparepanel" style="top:56px; right:298px; width:320px; display:none;">
+  <div class="floater-head"><span>Scenario Comparison</span><button class="x" data-close="comparepanel" aria-label="Close panel">✕</button></div>
+  <div class="floater-body">
+    <p style="margin-top:0; font-size:11.5px; color:var(--text-dim);">Capture the current simulation state as Baseline, adjust the environment or let time advance, then capture again to compare.</p>
+    <button class="subtle-btn" id="btn-capture-baseline">Capture as Baseline</button>
+    <button class="subtle-btn primary" id="btn-capture-current">Capture as Comparison</button>
+    <div id="compare-table" style="margin-top:12px;"></div>
+    <button class="subtle-btn danger" id="btn-clear-compare" style="margin-top:10px;">Clear Comparison</button>
+  </div>
+</div>
+
+<!-- Inspector -->
+<div class="floater" id="inspector">
+  <div class="floater-head"><span id="insp-title">Inspector</span><button class="x" data-close="inspector" aria-label="Close panel">✕</button></div>
+  <div class="floater-body" id="insp-body"></div>
+</div>
+
+<!-- Layers -->
+<div class="floater" id="layerpanel">
+  <div class="floater-head"><span>Map Layers</span><button class="x" data-close="layerpanel" aria-label="Close panel">✕</button></div>
+  <div class="floater-body">
+    <div class="layer-group-title">Fire</div>
+    <label class="chk-row"><input type="checkbox" data-layer="fireActive" checked>Active detections / cells</label>
+    <label class="chk-row"><input type="checkbox" data-layer="firePerimeter" checked>Simulated perimeter</label>
+    <label class="chk-row"><input type="checkbox" data-layer="fireIntensity" checked>Heat / intensity glow</label>
+    <label class="chk-row"><input type="checkbox" data-layer="spotFires" checked>Spot fires</label>
+    <div class="layer-group-title">Environment</div>
+    <label class="chk-row"><input type="checkbox" data-layer="terrain" checked>Terrain relief</label>
+    <label class="chk-row"><input type="checkbox" data-layer="landcover" checked>Land cover / fuel</label>
+    <label class="chk-row"><input type="checkbox" data-layer="wind" checked>Wind vectors</label>
+    <div class="layer-group-title">Infrastructure</div>
+    <label class="chk-row"><input type="checkbox" data-layer="roads" checked>Roads</label>
+    <label class="chk-row"><input type="checkbox" data-layer="communities" checked>Communities</label>
+    <div class="layer-group-title">Evacuation</div>
+    <label class="chk-row"><input type="checkbox" data-layer="routes" checked>Evacuation routes</label>
+    <div class="layer-group-title">Experimental</div>
+    <label class="chk-row"><input type="checkbox" data-layer="thermalProxy">Thermal proxy (residual heat)</label>
+    <p style="font-size:10px; color:var(--text-faint); margin:2px 0 0;">Heuristic heat-decay overlay derived from the simulation, not live Landsat/VIIRS thermal imagery.</p>
+  </div>
+</div>
+
+<!-- Data status -->
+<div class="floater" id="datastatus">
+  <div class="floater-head"><span>Data Sources</span><button class="x" data-close="datastatus" aria-label="Close panel">✕</button></div>
+  <div class="floater-body" id="datastatus-body"></div>
+</div>
+
+<!-- About -->
+<div class="floater" id="about">
+  <div class="floater-head"><span>Methodology</span><button class="x" data-close="about" aria-label="Close panel">✕</button></div>
+  <div class="floater-body">
+    <p style="margin-top:0;">Ember couples a heuristic wildfire propagation model with a live evacuation routing engine. It is a decision-support simulation for exploring how environment and infrastructure interact — <b>not</b> an operational wildfire forecast.</p>
+    <div class="layer-group-title">Real inputs (this build)</div>
+    <p style="color:var(--text-dim); font-size:11.5px;">This deployment runs fully offline, so all "real" inputs below are represented by a deterministic <b>cached scenario</b> shaped like typical values from each source — clearly labeled, never presented as live telemetry. A production build would swap the adapters for NASA FIRMS, Open-Meteo, USGS 3DEP, ESA WorldCover, and OpenStreetMap/Overpass without touching the simulation engine.</p>
+    <div class="layer-group-title">Model</div>
+    <p style="color:var(--text-dim); font-size:11.5px;">Cellular fire propagation on a grid, factoring fuel (land cover), wind alignment, slope, humidity-driven dryness, and temperature. Probabilistic downwind spot ignition. User-deployed firebreaks locally suppress spread.</p>
+    <div class="layer-group-title">Decision engine</div>
+    <p style="color:var(--text-dim); font-size:11.5px;">Roads are classified SAFE / WATCH / THREATENED / BLOCKED from projected fire proximity. A graph router (Dijkstra) recomputes least-risk evacuation paths whenever road status changes, penalizing threatened edges and excluding blocked ones.</p>
+    <div class="layer-group-title">Keyboard shortcuts</div>
+    <div style="font-size:11.5px; color:var(--text-dim); display:grid; grid-template-columns:56px 1fr; row-gap:4px; column-gap:8px;">
+      <span class="mono" style="color:var(--text);">Space</span><span>Play / pause</span>
+      <span class="mono" style="color:var(--text);">R</span><span>Reset scenario</span>
+      <span class="mono" style="color:var(--text);">D</span><span>Run guided demo</span>
+      <span class="mono" style="color:var(--text);">L</span><span>Toggle layers panel</span>
+      <span class="mono" style="color:var(--text);">E</span><span>Toggle environment controls</span>
+      <span class="mono" style="color:var(--text);">I</span><span>Toggle inspector</span>
+      <span class="mono" style="color:var(--text);">← / →</span><span>Step simulation backward / forward</span>
+      <span class="mono" style="color:var(--text);">Esc</span><span>Close active panel</span>
+    </div>
+    <p style="font-size:11px; color:var(--text-faint); border-top:1px solid var(--line); padding-top:10px; margin-top:10px;">This is an interactive research / hackathon simulation, not an operational wildfire forecast. Fuel coefficients, thresholds, and spread constants are simplified and tunable, not professionally calibrated fire-behavior parameters.</p>
+  </div>
+</div>
+
+<div class="tooltip-hint" id="tooltip"></div>
+
+<!-- Welcome -->
+<div id="welcome">
+  <div class="card">
+    <div class="mk"></div>
+    <h1>Ember</h1>
+    <p class="tag">Environment → Fire → Infrastructure</p>
+    <button id="btn-enter">Enter Simulation</button>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* =========================================================================
+   0. UTILITIES / RNG
+   ========================================================================= */
+function mulberry32(a){
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+let SEED = 4207;
+let rng = mulberry32(SEED);
+const clamp = (v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+const lerp = (a,b,t)=>a+(b-a)*t;
+const deg2rad = d=>d*Math.PI/180;
+const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* =========================================================================
+   PREPARED LOCATIONS (§48). No live geocoding is available offline, so each
+   entry reseeds the same procedural terrain/road generator with a different
+   seed and a different starting environment -- honestly presented as demo
+   regions rather than a claim of real geographic data for each one.
+   ========================================================================= */
+/* Real-world anchor coordinates for each scenario. These do NOT change the
+   procedural terrain/road grid (see the comment above) -- they're a real
+   lat/lon that the live weather and fire-detection queries below are made
+   against, so "LIVE" in the data panel means an actual HTTP call to a real
+   place, honestly, without pretending the fixed synthetic road network is
+   real geography for that place. */
+const SCENARIOS = [
+  { id:'lospadres',  name:'Los Padres Ridge Corridor', region:'California',        seed:4207, wind:{dir:315,speed:24}, humidity:18, temperature:34, lat:34.62,  lon:-119.75 },
+  { id:'sierra',     name:'Sierra Foothills Corridor', region:'California',        seed:8823, wind:{dir:300,speed:32}, humidity:14, temperature:37, lat:39.26,  lon:-120.85 },
+  { id:'cascade',    name:'Cascade Range Corridor',    region:'Pacific Northwest', seed:5591, wind:{dir:250,speed:18}, humidity:38, temperature:24, lat:44.05,  lon:-121.80 },
+  { id:'frontrange', name:'Front Range Corridor',      region:'Colorado',         seed:7134, wind:{dir:280,speed:45}, humidity:9,  temperature:29, lat:39.74,  lon:-105.35 },
+];
+let currentScenario = SCENARIOS[0];
+
+/* value noise (deterministic) */
+function makeNoise(seed, lattice){
+  const r = mulberry32(seed);
+  const grid = new Float32Array(lattice*lattice);
+  for(let i=0;i<grid.length;i++) grid[i] = r();
+  function sample(x,y){ // x,y in [0,1)
+    const gx = x*(lattice-1), gy = y*(lattice-1);
+    const x0 = Math.floor(gx), y0 = Math.floor(gy);
+    const x1 = Math.min(x0+1,lattice-1), y1 = Math.min(y0+1,lattice-1);
+    const tx = gx-x0, ty = gy-y0;
+    const v00=grid[y0*lattice+x0], v10=grid[y0*lattice+x1];
+    const v01=grid[y1*lattice+x0], v11=grid[y1*lattice+x1];
+    const a = lerp(v00,v10,tx), b = lerp(v01,v11,tx);
+    return lerp(a,b,ty);
+  }
+  return sample;
+}
+function fbm(sample, x, y, octaves, seedOffset){
+  let total=0, amp=0.5, freq=1;
+  for(let o=0;o<octaves;o++){
+    total += sample((x*freq+seedOffset*0.13)%1, (y*freq+seedOffset*0.07)%1) * amp;
+    amp*=0.52; freq*=2.15;
+  }
+  return total;
+}
+
+/* =========================================================================
+   1. GRID / WORLD SETUP  (packages/geospatial + packages/data equivalent)
+   ========================================================================= */
+const GRID = 72; // NxN simulation cells
+/* Physical scale of the domain. One cell is 250 m on a side, so the simulated
+   window is 18 km x 18 km. Every distance the UI reports in km is derived from
+   this one constant applied to real grid distances -- no invented figures. */
+const CELL_KM = 0.25;
+function gridToKm(cells){ return cells*CELL_KM; }
+const FUEL_TABLE = { water:0.00, urban:0.05, cropland:0.45, grass:0.70, shrub:0.85, forest:1.00, bare:0.10 };
+const BURN_DURATION = { water:1, urban:26, cropland:16, grass:9, shrub:22, forest:38, bare:6 };
+const LC_COLOR = {
+  water:'#123a52', urban:'#463a3f', cropland:'#4f4a2a', grass:'#3c4a2a',
+  shrub:'#3a3f24', forest:'#233421', bare:'#3a3630'
+};
+const LC_ORDER = ['water','urban','cropland','grass','shrub','forest','bare'];
+
+let world = null; // built by buildWorld()
+
+function buildWorld(seed){
+  const noiseA = makeNoise(seed, 9);
+  const noiseB = makeNoise(seed+101, 6);
+  const noiseMoist = makeNoise(seed+205, 7);
+
+  const elevation = new Float32Array(GRID*GRID);
+  const landClass = new Uint8Array(GRID*GRID); // index into LC_ORDER
+  const fuel = new Float32Array(GRID*GRID);
+
+  for(let j=0;j<GRID;j++){
+    for(let i=0;i<GRID;i++){
+      const x=i/GRID, y=j/GRID;
+      let e = fbm(noiseA,x,y,4,0)*0.75 + fbm(noiseB,x,y,2,3)*0.35;
+      // ridge running NW-SE for visual + narrative structure
+      const ridge = 1 - Math.abs((x - y*0.6) - 0.15) * 2.1;
+      e += Math.max(0,ridge)*0.4;
+      e = clamp(e, 0, 1.4);
+      elevation[j*GRID+i] = e;
+
+      const moist = fbm(noiseMoist,x,y,3,7);
+      // river band
+      const riverDist = Math.abs((x*0.5 + y*0.9) - 0.62);
+      let cls = 'forest';
+      if(riverDist < 0.018) cls = 'water';
+      else if(e < 0.18 && moist>0.55) cls='grass';
+      else if(x>0.68 && y>0.62 && e<0.35) cls='urban'; // community footprint SE
+      else if(x<0.16 && y>0.7) cls='cropland';
+      else if(e>0.95) cls='bare';
+      else if(moist<0.28) cls='shrub';
+      else if(e<0.42 && moist<0.42) cls='grass';
+      landClass[j*GRID+i] = LC_ORDER.indexOf(cls);
+      fuel[j*GRID+i] = FUEL_TABLE[cls];
+    }
+  }
+
+  // fire cell state arrays
+  const state = new Uint8Array(GRID*GRID);       // 0 unburned 1 active 2 burned
+  const intensity = new Float32Array(GRID*GRID);
+  const arrival = new Int32Array(GRID*GRID).fill(-1);
+  const isSpot = new Uint8Array(GRID*GRID);
+  const intervention = new Float32Array(GRID*GRID).fill(1); // firebreak multiplier
+
+  return { elevation, landClass, fuel, state, intensity, arrival, isSpot, intervention,
+           activeList: [], history:[], perimeterGrowthRate:0.35 };
+}
+
+function cellClassName(i,j){ return LC_ORDER[world.landClass[j*GRID+i]]; }
+
+/* =========================================================================
+   2. ROAD GRAPH + COMMUNITIES  (packages/routing + packages/geospatial)
+   ========================================================================= */
+// Coordinates in grid space (0..GRID), polylines define roads.
+const ROAD_DEFS = [
+  {id:'hwy39',   name:'Highway 39',    cls:'highway',    pts:[[4,60],[16,52],[28,46],[40,40],[52,34],[64,26]]},
+  {id:'canyon',  name:'Canyon Road',   cls:'secondary',  pts:[[4,60],[10,48],[14,34],[18,20],[22,8]]},
+  {id:'ridge',   name:'Ridge Road',    cls:'secondary',  pts:[[22,8],[34,14],[46,20],[58,24],[64,26]]},
+  {id:'oldmill', name:'Old Mill Road', cls:'residential',pts:[[28,46],[30,58],[34,66],[40,70]]},
+  {id:'pinehollow',name:'Pine Hollow Dr', cls:'residential', pts:[[40,40],[44,50],[48,60],[52,68]]},
+  {id:'summit',  name:'Summit Pass',   cls:'secondary',  pts:[[52,34],[56,22],[60,10]]},
+  {id:'valleyx', name:'Valley Crossing', cls:'residential', pts:[[16,52],[24,58],[34,66]]},
+  {id:'foothill',name:'Foothill Ave',  cls:'residential',pts:[[40,70],[52,68],[64,66]]},
+  {id:'eastbelt',name:'East Belt Rd',  cls:'secondary',  pts:[[64,26],[66,40],[68,54],[64,66]]},
+  {id:'millcreek',name:'Mill Creek Ln',cls:'residential', pts:[[34,66],[40,70]]},
+  {id:'safeexit',name:'Route 12 (Safe Zone)', cls:'highway', pts:[[64,66],[70,70]]},
+];
+const COMMUNITIES = [
+  {id:'oakridge', name:'Oakridge', pop:1840, node:[28,46]},
+  {id:'millcreek', name:'Mill Creek', pop:960, node:[40,70]},
+  {id:'summitview', name:'Summit View', pop:540, node:[60,10]},
+  {id:'pinehollow', name:'Pine Hollow', pop:1210, node:[52,68]},
+];
+const SAFE_ZONE_NODE_KEY = '70,70';
+
+function keyOf(p){ return p[0]+','+p[1]; }
+
+let roadGraph = null; // {nodes:Map key->{x,y}, edges:[], adjacency:Map}
+let roads = null;     // per-road runtime status
+
+/**
+ * Build the routing graph.
+ *
+ * IMPORTANT (regression fix): an earlier version created exactly one edge per
+ * road, joining only the FIRST and LAST vertex of the polyline. Any road whose
+ * junction with another road fell on an interior vertex was therefore never
+ * actually connected in the graph. Concretely, Summit Pass begins at [52,34],
+ * which is an interior vertex of Highway 39 -- so Summit View and Pine Hollow
+ * had NO evacuation route to the safe zone even with zero fire on the map,
+ * which silently broke the whole fire -> road -> route -> accessibility chain.
+ *
+ * Roads are now decomposed into one graph edge per polyline SEGMENT
+ * (A-B, B-C, C-D rather than A-D). Every vertex becomes a node, so roads that
+ * meet at an interior vertex share that node. Each edge keeps its parent road
+ * id, so road status / cost / closure / threat state still drive routing
+ * exactly as before.
+ */
+function buildRoadGraph(){
+  const nodes = new Map();
+  const edges = [];
+  roads = ROAD_DEFS.map(def=>{
+    const segPts = def.pts;
+    for(let k=0;k<segPts.length;k++){
+      const key = keyOf(segPts[k]);
+      if(!nodes.has(key)) nodes.set(key,{x:segPts[k][0], y:segPts[k][1]});
+    }
+    for(let k=0;k<segPts.length-1;k++){
+      const a=segPts[k], b=segPts[k+1];
+      edges.push({ id:def.id, name:def.name, cls:def.cls, pts:[a,b],
+                   length:Math.hypot(b[0]-a[0], b[1]-a[1]),
+                   from:keyOf(a), to:keyOf(b), seg:k });
+    }
+    return { id:def.id, name:def.name, cls:def.cls, status:'SAFE', eta:null, minDist:999, manualClosed:false, sampled:sampleLine(segPts) };
+  });
+  const adjacency = new Map();
+  for(const n of nodes.keys()) adjacency.set(n, []);
+  for(const e of edges){
+    adjacency.get(e.from).push({to:e.to, edge:e});
+    adjacency.get(e.to).push({to:e.from, edge:e});
+  }
+  roadGraph = { nodes, edges, adjacency };
+}
+function sampleLine(pts, stepLen){
+  stepLen = stepLen || 1.2;
+  const out=[];
+  for(let k=0;k<pts.length-1;k++){
+    const a=pts[k], b=pts[k+1];
+    const d = Math.hypot(b[0]-a[0], b[1]-a[1]);
+    const n = Math.max(1, Math.round(d/stepLen));
+    for(let s=0;s<=n;s++){ const t=s/n; out.push([lerp(a[0],b[0],t), lerp(a[1],b[1],t)]); }
+  }
+  return out;
+}
+
+/* =========================================================================
+   3. SIMULATION ENGINE  (packages/simulation)
+   ========================================================================= */
+const env = {
+  windDir: 315,   // degrees, meteorological "from" bearing simplified to travel bearing
+  windSpeed: 24,  // km/h
+  humidity: 18,   // %
+  temperature: 34,// C
+  spreadMultiplier: 1.0,
+  spotProbability: 0.35 // 0..1 (user slider 0-100 -> /100)
+};
+
+const NEI = [[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]];
+
+function ignite(i,j,t,spot){
+  const idx=j*GRID+i;
+  if(world.state[idx]!==0) return false;
+  if(world.fuel[idx]<=0.0) return false;
+  world.state[idx]=1;
+  world.intensity[idx]= spot? 0.18:0.3;
+  world.arrival[idx]=t;
+  world.isSpot[idx]= spot?1:0;
+  world.activeList.push(idx);
+  return true;
+}
+
+function findFlammableNear(cx,cy){
+  // spiral outward search for a flammable, unburned cell near the requested point
+  for(let r=0;r<=18;r++){
+    for(let dx=-r;dx<=r;dx++){
+      for(let dy=-r;dy<=r;dy++){
+        if(Math.max(Math.abs(dx),Math.abs(dy))!==r) continue;
+        const x=cx+dx, y=cy+dy;
+        if(x<0||y<0||x>=GRID||y>=GRID) continue;
+        const idx=y*GRID+x;
+        if(world.fuel[idx]>0.4 && world.state[idx]===0) return [x,y];
+      }
+    }
+  }
+  return [clamp(cx,0,GRID-1), clamp(cy,0,GRID-1)];
+}
+/**
+ * Seed the observed ignition(s) (cached FIRMS-detection analogue).
+ *
+ * Tuned empirically against the real engine. The previous default,
+ * [[24,26],[54,46]], sat inside the road network's threat radius: at t=0
+ * Canyon Road was already THREATENED and four other corridors were already on
+ * WATCH, so the scenario opened at the infrastructure-impact stage and there
+ * was no observable Observe -> Spread -> Impact progression at all.
+ *
+ * A single ignition in the upwind NW quadrant leaves every corridor SAFE at
+ * t=0; the first real road transition (Canyon Road -> WATCH) then emerges from
+ * propagation at ~t=10 rather than being pre-baked into the initial condition.
+ */
+const DEFAULT_IGNITIONS = [[6,6]];
+/** Grid cells a live NASA FIRMS query mapped real detections onto, for the
+ *  scenario currently loaded. Set by applyLiveConditions(); cleared whenever
+ *  the scenario/location changes so a stale detection from a previous place
+ *  can never seed the wrong scenario. Empty means "use the tuned default". */
+let liveIgnitionCells = [];
+function seedIgnitions(t){
+  const requested = liveIgnitionCells.length ? liveIgnitionCells : DEFAULT_IGNITIONS;
+  requested.forEach(p=>{ const safe = findFlammableNear(p[0],p[1]); ignite(safe[0],safe[1],t,false); });
+}
+
+let simTime = 0; // minutes
+let running = false;
+let speed = 1;
+/* Simulation clock.
+   One tick == one simulated minute. TICK_MS/speed is the real time each tick
+   occupies. These two constants are tuned together with the guided-demo script
+   below: at 260ms/tick and a 30-minute horizon the whole simulation completed
+   in ~3.9 real seconds at 2x, long before any of the demo's events could fire.
+   700ms x 100 minutes gives a ~70s guided run at 1x (~35s at 2x, ~18s at 4x),
+   which is enough simulated time for the fire to actually reach, threaten and
+   close corridors. Rendering is decoupled from ticking (see the main loop), so
+   a slower tick does not make the animation choppy. */
+const TICK_MS = 700;          // real ms per simulated minute at 1x
+const MAX_TL_MINUTES = 100;   // simulated-minute horizon
+let lastTickAt = 0;
+let events = [];
+let lastRoadStatuses = {};
+let roadPulseUntil = {}; // roadId -> performance.now() timestamp; drives row + map pulse
+
+// env.windDir follows meteorological convention: the compass direction the wind
+// blows FROM (e.g. 315 = "out of the NW"). Fire therefore travels TOWARD the
+// opposite bearing. All spread/spotting math routes through this helper so the
+// UI label, the compass needle, and the actual propagation stay consistent.
+function windTravelBearing(){ return (env.windDir + 180) % 360; }
+function windFactorFor(dx,dy){
+  const bearing = (Math.atan2(dx,-dy)*180/Math.PI + 360) % 360;
+  let diff = Math.abs(bearing - windTravelBearing()); if(diff>180) diff=360-diff;
+  const align = Math.cos(deg2rad(diff)); // 1 downwind, -1 upwind
+  const spdTerm = env.windSpeed/80;
+  return clamp(1 + align*spdTerm*1.7, 0.12, 3.2);
+}
+function drynessFactor(){ return clamp(1 + (50-env.humidity)/50*0.9, 0.28, 1.9); }
+function temperatureFactor(){ return clamp(1 + (env.temperature-20)/110, 0.82, 1.35); }
+
+/* =========================================================================
+   3b. INTERVENTION LEDGER  (deterministic, simulation-time addressed)
+   -------------------------------------------------------------------------
+   Every action that mutates simulation inputs -- a wind shift, a spotting-risk
+   change, a firebreak, whether it came from the guided demo or from the user's
+   own drawing -- is recorded here against the simulated MINUTE at which it
+   applies, never against wall-clock time.
+
+   Two things fall out of that:
+     * the guided demo is speed-, pause- and scrub-proof. Events fire because
+       simTime reached a value, so 1x/2x/10x all produce the same causal
+       sequence and pausing genuinely pauses the story.
+     * scrubbing stays coherent. scrubToTime() re-simulates from t=0 and
+       replays the ledger, so a firebreak drawn at minute 52 exists at minute
+       60 and does not exist at minute 40. (Previously the world was rebuilt on
+       scrub and every firebreak silently vanished.)
+   ========================================================================= */
+let interventions = [];   // {at, type, data, label, detail}
+let announcedSpots = [];  // spot-fire cells already reported to the feed
+let envBaseline = null;   // env snapshot that replays start from
+
+function snapshotEnvBaseline(){
+  envBaseline = { windDir:env.windDir, windSpeed:env.windSpeed, humidity:env.humidity,
+                  temperature:env.temperature, spreadMultiplier:env.spreadMultiplier,
+                  spotProbability:env.spotProbability };
+}
+function restoreEnvBaseline(){ if(envBaseline) Object.assign(env, envBaseline); }
+
+/** Record and immediately apply an intervention at the current simulated minute. */
+function recordIntervention(iv){
+  interventions.push(iv);
+  applyIntervention(iv);
+  return iv;
+}
+/** Pure state mutation for one intervention. Called live and during replay. */
+function applyIntervention(iv){
+  if(iv.type==='wind'){ env.windDir = iv.data.dir; env.windSpeed = iv.data.speed; }
+  else if(iv.type==='spotting'){ env.spotProbability = iv.data.value; }
+  else if(iv.type==='firebreak'){ applyFirebreak(iv.data.pts, iv.data.halfWidth); }
+}
+/** Replay every intervention scheduled at or before minute t (used by scrub). */
+function replayInterventions(t){
+  restoreEnvBaseline();
+  firebreakSegments = [];
+  for(const iv of interventions){
+    if(iv.at > t) continue;
+    applyIntervention(iv);
+    if(iv.type==='firebreak'){
+      const pts = iv.data.pts;
+      for(let k=0;k<pts.length-1;k++) firebreakSegments.push([pts[k],pts[k+1]]);
+    }
+  }
+}
+/** Apply anything scheduled exactly for the minute we are about to simulate. */
+function applyScheduledFor(minute){
+  for(const iv of interventions){
+    if(iv.at===minute && !iv.live){ iv.live=true; applyIntervention(iv); }
+  }
+}
+
+function stepSimulation(){
+  simTime += 1;
+  const t = simTime;
+  applyScheduledFor(t);
+  if(demo.active) demoOnMinute(t);
+  const newIgnitions = [];
+  const stillActive = [];
+  const BASE_RATE = 0.022;
+  const dryF = drynessFactor(), tempF = temperatureFactor();
+
+  for(const idx of world.activeList){
+    const j = Math.floor(idx/GRID), i = idx % GRID;
+    // grow intensity
+    const cls = LC_ORDER[world.landClass[idx]];
+    world.intensity[idx] = clamp(world.intensity[idx] + 0.05*world.fuel[idx]*tempF, 0, 1);
+    const age = t - world.arrival[idx];
+    if(age > (BURN_DURATION[cls]||16)){
+      world.state[idx]=2; // burned out
+      continue;
+    }
+    stillActive.push(idx);
+
+    // spread to neighbors
+    for(const [dx,dy] of NEI){
+      const ni=i+dx, nj=j+dy;
+      if(ni<0||nj<0||ni>=GRID||nj>=GRID) continue;
+      const nidx = nj*GRID+ni;
+      if(world.state[nidx]!==0) continue;
+      const fuelF = world.fuel[nidx];
+      if(fuelF<=0) continue;
+      const windF = windFactorFor(dx,dy);
+      const slopeDelta = world.elevation[nidx]-world.elevation[idx];
+      const slopeF = clamp(1 + clamp(slopeDelta/0.22,-1,1)*0.85, 0.22, 2.1);
+      const interventionF = world.intervention[nidx];
+      const score = BASE_RATE*fuelF*windF*slopeF*dryF*tempF*interventionF*env.spreadMultiplier;
+      const prob = 1-Math.exp(-score);
+      if(rng() < prob){ newIgnitions.push([ni,nj,false]); }
+    }
+
+    // spot fires (downwind probabilistic ember spotting)
+    if(world.intensity[idx] > 0.55){
+      const spotChance = env.spotProbability * world.intensity[idx] * (env.windSpeed/80) * 0.05;
+      if(rng() < spotChance){
+        const dist = 4 + Math.floor(rng()*10);
+        const jitter = (rng()-0.5)*40;
+        const bearing = deg2rad(windTravelBearing() + jitter);
+        const tx = Math.round(i + Math.sin(bearing)*dist);
+        const ty = Math.round(j - Math.cos(bearing)*dist);
+        if(tx>=0&&ty>=0&&tx<GRID&&ty<GRID){
+          const tIdx=ty*GRID+tx;
+          if(world.state[tIdx]===0 && world.fuel[tIdx]>0.28 && rng()<0.55*world.fuel[tIdx]){
+            newIgnitions.push([tx,ty,true]);
+          }
+        }
+      }
+    }
+  }
+  // Snapshot the pre-ignition front BEFORE igniting: ignite() pushes into
+  // world.activeList, which is the same array object as stillActive, so
+  // measuring separation afterwards would compare each new spot against itself.
+  const frontBefore = stillActive.slice();
+  world.activeList = stillActive;
+  let newCount=0;
+  const bornSpots=[];
+  for(const [ni,nj,spot] of newIgnitions){
+    if(ignite(ni,nj,t,spot)){ newCount++; if(spot) bornSpots.push([ni,nj]); }
+  }
+  /* Announce ember spotting as a real detection: only when the new spot cell
+     is genuinely detached from the main front (>= 3 cells of unburned ground
+     between them), and at most one announcement per cluster. The distance
+     reported is measured, not scripted. */
+  for(const [ni,nj] of bornSpots){
+    let sep = 9999;
+    for(const idx of frontBefore){
+      const jj=Math.floor(idx/GRID), ii=idx%GRID;
+      const d=Math.hypot(ii-ni, jj-nj); if(d<sep) sep=d;
+    }
+    if(sep < 3) continue;
+    let dup=false;
+    for(const k of announcedSpots){ const kj=Math.floor(k/GRID), ki=k%GRID;
+      if(Math.hypot(ki-ni,kj-nj) < 5){ dup=true; break; } }
+    if(dup) continue;
+    announcedSpots.push(nj*GRID+ni);
+    pushEvent('event','SPOT FIRE DETECTED',
+      'Ember ignition at cell '+ni+','+nj+' \u2014 '+gridToKm(sep).toFixed(2)+' km ahead of the main front, downwind at '+Math.round(windTravelBearing())+'\u00b0.');
+  }
+  if(newCount>0){
+    world.perimeterGrowthRate = world.perimeterGrowthRate*0.85 + (newCount/ Math.max(1,stillActive.length)) * 6 *0.15;
+  }
+
+  updateRoadStatuses(t);
+  recomputeMetrics(t);
+  saveHistorySnapshot(t);
+}
+
+/* =========================================================================
+   4. ROAD THREAT DETECTION + ROUTING
+   ========================================================================= */
+function nearestFireDist(px,py){
+  let best = 9999;
+  // brute-force over active cells (bounded count, fine for grid size)
+  for(const idx of world.activeList){
+    const j = Math.floor(idx/GRID), i = idx%GRID;
+    const d = Math.hypot(i-px, j-py);
+    if(d<best) best=d;
+  }
+  return best;
+}
+
+const THRESH = { blocked:3.2, threatened:8, watch:13 };
+
+function updateRoadStatuses(t){
+  for(const r of roads){
+    if(r.manualClosed){ r.status='BLOCKED'; r.eta=0; r.minDist=0; continue; }
+    let minDist = 9999;
+    for(const [px,py] of r.sampled){
+      const d = nearestFireDist(px,py);
+      if(d<minDist) minDist=d;
+    }
+    r.minDist = minDist;
+    let status;
+    if(minDist<=THRESH.blocked) status='BLOCKED';
+    else if(minDist<=THRESH.threatened) status='THREATENED';
+    else if(minDist<=THRESH.watch) status='WATCH';
+    else status='SAFE';
+    r.status = status;
+    if(status==='THREATENED' || status==='WATCH'){
+      const rate = Math.max(0.08, world.perimeterGrowthRate);
+      r.eta = Math.round((minDist-THRESH.blocked)/rate);
+    } else if(status==='BLOCKED'){ r.eta = 0; }
+    else { r.eta = null; }
+  }
+  // detect transitions -> events + reroute
+  let changed=false;
+  for(const r of roads){
+    const prev = lastRoadStatuses[r.id];
+    if(prev !== r.status){
+      changed = true;
+      if(r.status==='THREATENED') pushEvent('event', r.name.toUpperCase()+' THREATENED', 'Fire front '+gridToKm(r.minDist).toFixed(2)+' km from corridor. Projected closure in '+r.eta+' min.');
+      else if(r.status==='BLOCKED') pushEvent('event', r.name.toUpperCase()+' BLOCKED', 'Fire perimeter within '+gridToKm(r.minDist).toFixed(2)+' km — corridor removed from the routing graph.');
+      else if(r.status==='WATCH' && prev==='SAFE') pushEvent('system', r.name.toUpperCase()+' — WATCH', 'Fire front '+gridToKm(r.minDist).toFixed(2)+' km from corridor and closing.');
+      else if(r.status==='SAFE' && prev) pushEvent('system', r.name.toUpperCase()+' clear', 'No longer within threat radius.');
+      lastRoadStatuses[r.id]=r.status;
+      // Drive the road-row pulse + map glow (§15/§40): only for real transitions,
+      // not the initial undefined->status assignment on scenario init.
+      if(prev !== undefined) roadPulseUntil[r.id] = (typeof performance!=='undefined'?performance.now():Date.now()) + 1700;
+    }
+  }
+  if(changed) recomputeAllRoutes(true);
+}
+
+function edgeCost(edge, roadStatus){
+  const base = edge.length;
+  const penalty = roadStatus==='BLOCKED' ? Infinity : roadStatus==='THREATENED' ? 5.2 : roadStatus==='WATCH' ? 0.7 : 0;
+  return base*(1+penalty);
+}
+
+function dijkstra(startKey, endKey){
+  const dist = new Map(); const prev = new Map(); const visited = new Set();
+  for(const k of roadGraph.nodes.keys()) dist.set(k, Infinity);
+  dist.set(startKey,0);
+  const pq = [[0,startKey]];
+  while(pq.length){
+    pq.sort((a,b)=>a[0]-b[0]);
+    const [d,u] = pq.shift();
+    if(visited.has(u)) continue;
+    visited.add(u);
+    if(u===endKey) break;
+    const neighbors = roadGraph.adjacency.get(u)||[];
+    for(const {to,edge} of neighbors){
+      const roadRuntime = roads.find(r=>r.id===edge.id);
+      const c = edgeCost(edge, roadRuntime.status);
+      if(!isFinite(c)) continue;
+      const nd = d+c;
+      if(nd < dist.get(to)){ dist.set(to,nd); prev.set(to,{from:u,edge}); pq.push([nd,to]); }
+    }
+  }
+  if(!isFinite(dist.get(endKey))) return null;
+  const path=[]; let cur=endKey;
+  while(cur!==startKey){
+    const p = prev.get(cur);
+    if(!p) return null;
+    path.push(p.edge); cur=p.from;
+  }
+  path.reverse();
+  return { path, cost: dist.get(endKey) };
+}
+
+let currentRoutes = {}; // communityId -> {path, cost, blocked}
+
+/** Collapse consecutive duplicate road names (route can reuse a name across
+ *  adjacent graph edges) into a readable "A → B → C" corridor label. */
+function routeLabel(result){
+  if(!result) return null;
+  const names = [];
+  for(const e of result.path){ if(names[names.length-1]!==e.name) names.push(e.name); }
+  return names.join(' → ');
+}
+
+/**
+ * Recompute every community's least-risk route and, on real changes,
+ * generate a deterministic explanation from actual route/road values
+ * (§15/§26) rather than a generic "routes updated" message: which
+ * community, the previous corridor, the new corridor, and — for
+ * isolation/restoration — the actual cause.
+ */
+function recomputeAllRoutes(announce){
+  const diffs = [];
+  for(const c of COMMUNITIES){
+    const startKey = keyOf(c.node);
+    const result = dijkstra(startKey, SAFE_ZONE_NODE_KEY);
+    const prevResult = currentRoutes[c.id];
+    const routeKey = r => r ? r.path.map(e=>e.id+'#'+e.seg).join(',') : 'NONE';
+    const prevIds = prevResult===undefined ? undefined : routeKey(prevResult);
+    const newIds = routeKey(result);
+    if(prevIds !== newIds && prevIds !== undefined){
+      diffs.push({ c, prevResult, result });
+    }
+    currentRoutes[c.id] = result;
+  }
+  if(announce && diffs.length){
+    for(const {c, prevResult, result} of diffs){
+      if(!result){
+        pushEvent('route', c.name.toUpperCase()+' ISOLATED', 'No safe evacuation route currently exists from this community to the safe zone.');
+      } else if(!prevResult){
+        pushEvent('route', 'ACCESS RESTORED', 'Community: '+c.name+'. Route: '+routeLabel(result)+'.');
+      } else {
+        const prevLabel = routeLabel(prevResult), newLabel = routeLabel(result);
+        const deltaCost = result.cost - prevResult.cost;
+        const costNote = isFinite(deltaCost) ? (deltaCost>=0 ? ' (+' + deltaCost.toFixed(1) + ' cost)' : ' (' + deltaCost.toFixed(1) + ' cost)') : '';
+        pushEvent('route', 'ROUTE RECOMPUTED', 'Community: '+c.name+'. Previous: '+prevLabel+'. New: '+newLabel+costNote+'.');
+      }
+    }
+    showToast('route','Route Updated', diffs.length+' community route'+(diffs.length===1?'':'s')+' recalculated from current road status.');
+  }
+}
+
+/* =========================================================================
+   5. METRICS / FEED / HISTORY
+   ========================================================================= */
+function countFireFronts(){
+  // union-find over active cells (8-connectivity)
+  const idxList = world.activeList;
+  if(idxList.length===0) return 0;
+  const parent = new Map();
+  const find = x=>{ while(parent.get(x)!==x){ x=parent.get(x); } return x; };
+  const union = (a,b)=>{ const ra=find(a), rb=find(b); if(ra!==rb) parent.set(ra,rb); };
+  const set = new Set(idxList);
+  for(const idx of idxList) parent.set(idx, idx);
+  for(const idx of idxList){
+    const j=Math.floor(idx/GRID), i=idx%GRID;
+    for(const [dx,dy] of NEI){
+      const ni=i+dx, nj=j+dy;
+      if(ni<0||nj<0||ni>=GRID||nj>=GRID) continue;
+      const nidx=nj*GRID+ni;
+      if(set.has(nidx)) union(idx,nidx);
+    }
+  }
+  const roots = new Set();
+  for(const idx of idxList) roots.add(find(idx));
+  return roots.size;
+}
+
+function recomputeMetrics(t){
+  const fronts = countFireFronts();
+  const threatened = roads.filter(r=>r.status==='THREATENED'||r.status==='BLOCKED').length;
+  const commAffected = COMMUNITIES.filter(c=>{
+    const r = currentRoutes[c.id];
+    return !r || r.path.some(e=>{ const rt=roads.find(x=>x.id===e.id); return rt.status!=='SAFE'; });
+  }).length;
+  const activeRoutes = COMMUNITIES.filter(c=>currentRoutes[c.id]).length;
+
+  setText('m-fronts', fronts);
+  setText('m-roads', threatened);
+  setText('m-comm', commAffected);
+  setText('m-routes', activeRoutes);
+  const hh = String(Math.floor(t/60)).padStart(2,'0'), mm = String(t%60).padStart(2,'0');
+  setText('m-simtime', '+'+hh+':'+mm);
+  setText('tl-elapsed', '+'+hh+':'+mm);
+}
+
+function saveHistorySnapshot(t){
+  world.history.push({ t, activeCount: world.activeList.length });
+  if(world.history.length>2000) world.history.shift();
+}
+
+function pushEvent(kind, title, detail, meta){
+  events.push(Object.assign({kind, title, detail, t: simTime}, meta||{}));
+  renderFeedItem(kind,title,detail,simTime);
+  renderTimelineMarker(kind,title,simTime);
+}
+function renderFeedItem(kind,title,detail,t){
+  const feed = document.getElementById('feed');
+  const el = document.createElement('div');
+  el.className = 'feed-item '+kind;
+  const hh=String(Math.floor(t/60)).padStart(2,'0'), mm=String(t%60).padStart(2,'0');
+  el.innerHTML = '<span class="t">+'+hh+':'+mm+'</span><b>'+title+'</b><br><span style="color:var(--text-dim)">'+detail+'</span>';
+  feed.appendChild(el);
+  while(feed.children.length>60) feed.removeChild(feed.firstChild);
+}
+/**
+ * A small tick on the timeline track at the minute an event occurred, so the
+ * scrubber is navigable by real history instead of a blind drag. Clicking a
+ * marker scrubs straight to that moment. Positioned by percentage of
+ * MAX_TL_MINUTES, same coordinate space as #tl-progress/#tl-handle.
+ */
+function renderTimelineMarker(kind, title, t){
+  const host = document.getElementById('tl-events');
+  const el = document.createElement('div');
+  el.className = 'tl-marker '+kind;
+  el.style.left = clamp(t/MAX_TL_MINUTES,0,1)*100+'%';
+  const hh=String(Math.floor(t/60)).padStart(2,'0'), mm=String(t%60).padStart(2,'0');
+  el.title = '+'+hh+':'+mm+'  '+title;
+  el.addEventListener('click', (e)=>{ e.stopPropagation(); scrubToTime(t); });
+  host.appendChild(el);
+}
+/** Shared by reset and scrub: both re-run the engine from t=0, so both must
+ *  clear the event log/feed/markers first or every scrub silently doubled
+ *  the entire event history (feed spam, duplicate timeline markers, an
+ *  ever-growing DOM) on top of whatever was already there. */
+function clearEventFeed(){
+  events = [];
+  document.getElementById('feed').innerHTML = '';
+  document.getElementById('tl-events').innerHTML = '';
+}
+function showToast(kind,title,detail){
+  const wrap = document.getElementById('corner-toast');
+  const el = document.createElement('div');
+  el.className='toast '+kind;
+  el.innerHTML = '<div class="tt">'+title+'</div><div>'+detail+'</div>';
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.style.transition='opacity .4s'; el.style.opacity='0'; setTimeout(()=>el.remove(),400); }, 3600);
+}
+function setText(id,val){ const el=document.getElementById(id); if(el) el.textContent=val; }
+
+/* =========================================================================
+   6. RENDERING
+   ========================================================================= */
+const cvT = document.getElementById('canvas-terrain');
+const cvF = document.getElementById('canvas-fire');
+const cvI = document.getElementById('canvas-infra');
+const cvX = document.getElementById('canvas-interact');
+const ctxT = cvT.getContext('2d'), ctxF = cvF.getContext('2d'), ctxI = cvI.getContext('2d'), ctxX = cvX.getContext('2d');
+let cell = 10; // px per grid cell, recomputed on resize
+let mapW=0, mapH=0;
+
+const layers = {
+  fireActive:true, firePerimeter:true, fireIntensity:true, spotFires:true,
+  terrain:true, landcover:true, wind:true, roads:true, communities:true, routes:true,
+  thermalProxy:false
+};
+
+/*
+ * All four map canvases are backed at devicePixelRatio resolution and then
+ * scaled back down with CSS, which is what makes canvas content sharp on
+ * retina/HiDPI displays. Without this, `canvas.width` was being set directly
+ * from CSS pixels, so every canvas rendered at half (or worse) native
+ * resolution on any HiDPI screen and the browser upscaled it -- blurring the
+ * fire field, contours and text no matter how good the drawing code is.
+ *
+ * The fix: size the backing store to `cssSize * dpr`, constrain the element's
+ * CSS box with c.style.width/height, and call ctx.setTransform(dpr,0,0,dpr,0,0)
+ * once so every existing draw call -- which all already work in CSS-pixel
+ * units via `cell` -- keeps working completely unchanged.
+ */
+let mapDPR = 1;
+function fitCanvasDPR(c, ctx, cssW, cssH){
+  const dpr = window.devicePixelRatio || 1;
+  c.width = Math.round(cssW*dpr);
+  c.height = Math.round(cssH*dpr);
+  c.style.width = cssW+'px';
+  c.style.height = cssH+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+function resizeCanvases(){
+  const wrap = document.getElementById('mapwrap');
+  const dpr = window.devicePixelRatio || 1;
+  // Idempotent: resizing resets every canvas's backing store and repaints the
+  // terrain (5,184 cells + contours), so do it only when the map box or DPR
+  // actually changed. This is what stops the entry-click sequence (resize ->
+  // reset -> deferred "belt-and-braces" resize a frame later) and repeated
+  // window 'resize' events with an unchanged size from repainting terrain
+  // to identical pixels a second time. The deferred resize still does real
+  // work if layout genuinely hadn't settled -- its size will then differ.
+  if(wrap.clientWidth === mapW && wrap.clientHeight === mapH && dpr === mapDPR) return;
+  mapW = wrap.clientWidth; mapH = wrap.clientHeight;
+  cell = Math.min(mapW, mapH) / GRID;
+  mapDPR = dpr;
+  const w = Math.floor(cell*GRID), h = Math.floor(cell*GRID);
+  const left = (mapW-w)/2, top = (mapH-h)/2;
+  [[cvT,ctxT],[cvF,ctxF],[cvI,ctxI],[cvX,ctxX]].forEach(([c,ctx])=>{
+    fitCanvasDPR(c, ctx, w, h);
+    c.style.left = left+'px'; c.style.top = top+'px';
+  });
+  // The offscreen field canvas is a fixed FIELD x FIELD sample grid (not tied
+  // to CSS pixels), so it is unaffected by DPR and only needs building once.
+  invalidateFireField();
+  drawTerrain();
+}
+
+/* =========================================================================
+   TERRAIN RENDERING: hillshade + elevation contours
+   -------------------------------------------------------------------------
+   drawTerrain() only runs on resize/reset/scrub (never per animation frame),
+   so it can afford real relief shading instead of a flat per-cell fill.
+
+   A finite-difference gradient over world.elevation gives a slope + aspect
+   at every cell; a fixed-direction Lambertian light turns that into a
+   hillshade multiplier, so ridgelines and drainages read as landform rather
+   than as a species of noise -- and it makes the slope term that already
+   drives propagation (world.elevation feeding slopeF in stepSimulation)
+   something the operator can actually see, not just take on faith.
+
+   Elevation contour lines are drawn on top using the SAME marching-squares
+   machinery as the fire perimeter (MS_CASES / edge interpolation), but
+   deliberately WITHOUT the organic fBm warp used for fire: this is real
+   simulated geography, not a boundary that should look hand-drawn, so the
+   lines read as a technical topographic map rather than an artistic one.
+
+   Landcover colors are also desaturated at render time. Fire, roads and
+   routes are drawn on separate canvases layered above this one; keeping the
+   basemap duller and flatter is what lets those state layers read as the
+   thing to look AT rather than compete with the ground for attention.
+   ========================================================================= */
+function elevAt(i,j){
+  i = i<0?0:i>=GRID?GRID-1:i; j = j<0?0:j>=GRID?GRID-1:j;
+  return world.elevation[j*GRID+i];
+}
+// Vertical exaggeration for shading purposes only (does not touch
+// world.elevation or the spread model). Real terrain slope over a 72-cell
+// procedural grid is gentle -- mean |gradient| ~0.03 -- which produces almost
+// no shading contrast at true scale. GIS hillshades commonly exaggerate
+// vertical relief for exactly this reason; 9x was tuned against this
+// generator so relief is legible without looking like fake mountains.
+const HILLSHADE_Z = 9;
+function computeHillshade(){
+  const hs = new Float32Array(GRID*GRID);
+  // Fixed light from the NW -- matching buildWorld's own NW-SE ridge -- so
+  // shading reinforces the procedural landform instead of fighting it.
+  const az = deg2rad(315), alt = deg2rad(48);
+  const lx = Math.cos(alt)*Math.sin(az), ly = -Math.cos(alt)*Math.cos(az), lz = Math.sin(alt);
+  for(let j=0;j<GRID;j++){
+    for(let i=0;i<GRID;i++){
+      const dzdx = (elevAt(i+1,j)-elevAt(i-1,j))/2 * HILLSHADE_Z;
+      const dzdy = (elevAt(i,j+1)-elevAt(i,j-1))/2 * HILLSHADE_Z;
+      const nlen = Math.hypot(dzdx,dzdy,1);
+      const dot = (-dzdx/nlen)*lx + (-dzdy/nlen)*ly + (1/nlen)*lz;
+      hs[j*GRID+i] = clamp(dot,0,1);
+    }
+  }
+  return hs;
+}
+/** Parse '#rrggbb' or 'rgb(r,g,b)' / 'rgba(r,g,b,a)' into [r,g,b] (ints, 0-255).
+ *  Both colour helpers below go through this, so they accept each other's output.
+ *  LC_COLOR holds hex; desaturate() and shadeColor() both return 'rgb(...)'; they
+ *  are chained in drawTerrain(). Throws on anything else rather than letting a
+ *  bad parse turn into NaN -> black. */
+function parseColor(c){
+  if(typeof c === 'string'){
+    const s = c.trim();
+    let m = /^#([0-9a-f]{6})$/i.exec(s);
+    if(m){ const n = parseInt(m[1],16); return [(n>>16)&255, (n>>8)&255, n&255]; }
+    m = /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*(?:,\s*[\d.]+\s*)?\)$/i.exec(s);
+    if(m) return [1,2,3].map(k=>clamp(Math.round(+m[k]),0,255));
+  }
+  throw new TypeError('parseColor: unsupported colour ' + String(c) + ' (expected #rrggbb or rgb()/rgba())');
+}
+/** Desaturate a colour (#rrggbb or rgb()) toward its own luminance by `amt` (0=none, 1=grayscale). Returns 'rgb(r,g,b)'. */
+function desaturate(color, amt){
+  if(!Number.isFinite(amt)) throw new RangeError('desaturate: amt must be finite, got ' + amt);
+  const [r,g,b] = parseColor(color);
+  const lum = 0.299*r + 0.587*g + 0.114*b;
+  return 'rgb('+Math.round(lerp(r,lum,amt))+','+Math.round(lerp(g,lum,amt))+','+Math.round(lerp(b,lum,amt))+')';
+}
+
+const CONTOUR_SUB = 2;          // sub-samples per cell for the contour field
+const CONTOUR_INTERVAL = 0.15;  // elevation units between minor contour lines
+const CONTOUR_MAJOR_EVERY = 3;  // every Nth line drawn heavier, topo-map style
+
+/** Marching squares over a bilinearly-upsampled elevation field, NOT warped:
+ *  real geography should look precise, unlike the organic fire boundary. */
+function elevationContours(iso){
+  const N = GRID*CONTOUR_SUB;
+  const buf = new Float32Array((N+1)*(N+1));
+  for(let b=0;b<=N;b++) for(let a=0;a<=N;a++) buf[b*(N+1)+a] = sampleCells(world.elevation, a/CONTOUR_SUB, b/CONTOUR_SUB);
+  const segs=[];
+  const gx = a => a/CONTOUR_SUB;
+  const stride = N+1;
+  for(let b=0;b<N;b++){
+    for(let a=0;a<N;a++){
+      const w=b*stride+a;
+      const v00=buf[w], v10=buf[w+1], v11=buf[w+stride+1], v01=buf[w+stride];
+      const c = (v00>iso?8:0)|(v10>iso?4:0)|(v11>iso?2:0)|(v01>iso?1:0);
+      if(c===0||c===15) continue;
+      const codes = MS_CASES[c];
+      const dT=v10-v00, dR=v11-v10, dB=v11-v01, dL=v01-v00;
+      const tT = Math.abs(dT)<1e-6?0.5:clamp((iso-v00)/dT,0,1);
+      const tR = Math.abs(dR)<1e-6?0.5:clamp((iso-v10)/dR,0,1);
+      const tB = Math.abs(dB)<1e-6?0.5:clamp((iso-v01)/dB,0,1);
+      const tL = Math.abs(dL)<1e-6?0.5:clamp((iso-v00)/dL,0,1);
+      const ex=[gx(a+tT), gx(a+1), gx(a+tB), gx(a)];
+      const ey=[gx(b),    gx(b+tR), gx(b+1), gx(b+tL)];
+      for(let q=0;q<codes.length;q+=2) segs.push([[ex[codes[q]],ey[codes[q]]],[ex[codes[q+1]],ey[codes[q+1]]]]);
+    }
+  }
+  return segs;
+}
+function drawElevationContours(){
+  let maxE = 0; for(let k=0;k<world.elevation.length;k++) if(world.elevation[k]>maxE) maxE=world.elevation[k];
+  let idx=0;
+  for(let iso=CONTOUR_INTERVAL; iso<maxE; iso+=CONTOUR_INTERVAL, idx++){
+    const segs = elevationContours(iso);
+    if(!segs.length) continue;
+    const major = idx % CONTOUR_MAJOR_EVERY === 0;
+    ctxT.strokeStyle = major ? 'rgba(0,0,0,0.30)' : 'rgba(0,0,0,0.15)';
+    ctxT.lineWidth = major ? 1 : 0.6;
+    ctxT.beginPath();
+    for(const [p,q] of segs){ ctxT.moveTo(p[0]*cell,p[1]*cell); ctxT.lineTo(q[0]*cell,q[1]*cell); }
+    ctxT.stroke();
+  }
+}
+
+const TERRAIN_ONLY_BASE = '#363c44'; // 'Terrain' layer without landcover: cool slate, shaded by hillshade
+function drawTerrain(){
+  if(!world) return;
+  ctxT.clearRect(0,0,cvT.width/mapDPR,cvT.height/mapDPR);
+  const hillshade = computeHillshade();
+  for(let j=0;j<GRID;j++){
+    for(let i=0;i<GRID;i++){
+      const idx=j*GRID+i;
+      const cls = LC_ORDER[world.landClass[idx]];
+      let color = LC_COLOR[cls];
+      if(layers.landcover){
+        // NOTE: the "near-black on projectors" symptom this brightening was
+        // originally aimed at was actually desaturate()'s rgb() output being
+        // fed to a hex-only shadeColor() (NaN -> rgb(0,0,0) for every cell),
+        // not a too-low brightness floor. Both helpers now share parseColor().
+        // If terrain ever looks black again, check the fillStyle values before
+        // touching these multipliers.
+        color = desaturate(color, 0.15);
+        color = shadeColor(color, 0.75 + hillshade[idx]*0.85);
+      } else if(layers.terrain){
+        // Same recipe as the landcover branch (base tone x hillshade factor),
+        // with a neutral cool-slate base instead of per-class colors. This
+        // keeps the basemap dark like the landcover view so fire/road/route
+        // layers still read on top; the earlier formula (Pass 5) reached
+        // ~rgb(235,240,255) on lit slopes and washed out the whole map.
+        color = shadeColor(TERRAIN_ONLY_BASE, 0.75 + hillshade[idx]*0.85);
+      } else {
+        color = '#12161a';
+      }
+      ctxT.fillStyle = color;
+      ctxT.fillRect(i*cell, j*cell, cell+0.6, cell+0.6);
+    }
+  }
+  if(layers.landcover || layers.terrain) drawElevationContours();
+}
+/** Scale a colour (#rrggbb or rgb()) by brightness factor `f`. Returns 'rgb(r,g,b)'. */
+function shadeColor(color, f){
+  if(!Number.isFinite(f)) throw new RangeError('shadeColor: f must be finite, got ' + f);
+  const [r0,g0,b0] = parseColor(color);
+  return 'rgb('+clamp(Math.round(r0*f),0,255)+','+clamp(Math.round(g0*f),0,255)+','+clamp(Math.round(b0*f),0,255)+')';
+}
+
+/* =========================================================================
+   FIRE RENDERING
+   -------------------------------------------------------------------------
+   The simulation stays strictly cellular; only the presentation changes.
+
+   Previously drawFire() painted one fillRect per burning cell, so a physically
+   reasonable fire read on screen as a mosaic of orange squares popping on and
+   off. Now the cell arrays are resampled into a continuous scalar field at
+   SUB x sub-cell resolution (72 -> 216 samples per axis), with:
+
+     * bicubic-ish smoothstep interpolation between cell centres, so the fire
+       has a continuous body rather than hard cell edges;
+     * a static deterministic fBm warp applied to the sample coordinates, which
+       makes the perimeter irregular and organic instead of axis-aligned --
+       the warp is fixed per seed, so it is reproducible and never invents
+       fire where the simulation has none (it only perturbs the boundary by
+       well under one cell);
+     * temporal easing (fireDisplay) so newly ignited cells rise in over a few
+       frames and burnt-out cells fade, giving smooth evolution.
+
+   The field is painted into a small offscreen canvas and scaled up with
+   image smoothing, which is both cheaper and smoother than per-cell rects.
+   On top of that go three separate readable layers: the burn scar, the
+   incandescent body, the active front (contour of the *advancing* edge only),
+   and discrete ember/spot-fire glyphs. A marching-squares contour of the same
+   warped field draws the perimeter, so the outline traces the organic shape
+   rather than a staircase.
+   ========================================================================= */
+const SUB = 3;                    // sub-samples per cell per axis
+const FIELD = GRID*SUB;
+let fireDisplay = null;           // eased per-cell intensity (temporal smoothing)
+let burnDisplay = null;           // eased per-cell burn-scar opacity
+let warpX = null, warpY = null;   // static organic boundary warp
+let fieldCanvas = null, fieldCtx = null, fieldImg = null;
+
+function initFireBuffers(){
+  fireDisplay = new Float32Array(GRID*GRID);
+  burnDisplay = new Float32Array(GRID*GRID);
+  // Seed the eased buffers from current state so a scrub/reset does not fade in.
+  for(let k=0;k<world.state.length;k++){
+    if(world.state[k]===1) fireDisplay[k] = Math.max(0.25, world.intensity[k]);
+    if(world.state[k]!==0) burnDisplay[k] = 1;
+  }
+}
+function initWarp(){
+  if(warpX) return;
+  const nx = makeNoise(SEED+911, 12), ny = makeNoise(SEED+1777, 12);
+  warpX = new Float32Array(FIELD*FIELD);
+  warpY = new Float32Array(FIELD*FIELD);
+  for(let b=0;b<FIELD;b++){
+    for(let a=0;a<FIELD;a++){
+      const u=a/FIELD, v=b/FIELD;
+      warpX[b*FIELD+a] = (fbm(nx,u,v,3,1)-0.5)*1.5;  // in cell units, sub-cell magnitude
+      warpY[b*FIELD+a] = (fbm(ny,u,v,3,5)-0.5)*1.5;
+    }
+  }
+}
+function ensureFieldCanvas(){
+  if(fieldCanvas) return;
+  fieldCanvas = document.createElement('canvas');
+  fieldCanvas.width = FIELD; fieldCanvas.height = FIELD;
+  fieldCtx = fieldCanvas.getContext('2d');
+  fieldImg = fieldCtx.createImageData(FIELD, FIELD);
+}
+
+const smoothstep = t => t*t*(3-2*t);
+/**
+ * Bilinear sample of a per-cell array with smoothstep weights, at cell coords.
+ * Deliberately allocation-free and closure-free: this runs ~50k times per field
+ * rebuild, and an inner-function allocation here cost ~40ms/rebuild.
+ */
+function sampleCells(arr, x, y){
+  let i0 = Math.floor(x), j0 = Math.floor(y);
+  const tx0 = x-i0, ty0 = y-j0;
+  const tx = smoothstep(tx0<0?0:tx0>1?1:tx0);
+  const ty = smoothstep(ty0<0?0:ty0>1?1:ty0);
+  const i1 = i0+1, j1 = j0+1;
+  const i0ok = i0>=0 && i0<GRID, i1ok = i1>=0 && i1<GRID;
+  const j0ok = j0>=0 && j0<GRID, j1ok = j1>=0 && j1<GRID;
+  const r0 = j0ok ? j0*GRID : -1, r1 = j1ok ? j1*GRID : -1;
+  const v00 = (r0>=0 && i0ok) ? arr[r0+i0] : 0;
+  const v10 = (r0>=0 && i1ok) ? arr[r0+i1] : 0;
+  const v01 = (r1>=0 && i0ok) ? arr[r1+i0] : 0;
+  const v11 = (r1>=0 && i1ok) ? arr[r1+i1] : 0;
+  const a = v00 + (v10-v00)*tx;
+  const b = v01 + (v11-v01)*tx;
+  return a + (b-a)*ty;
+}
+/** Warped field sample: organic boundary, still anchored to real cell values. */
+function fieldAt(arr, a, b){
+  const w = b*FIELD+a;
+  const x = (a+0.5)/SUB - 0.5 + warpX[w];
+  const y = (b+0.5)/SUB - 0.5 + warpY[w];
+  return sampleCells(arr, x, y);
+}
+
+/** Ease the display buffers toward the simulation's true state. */
+function advanceFireDisplay(dt){
+  if(!fireDisplay) initFireBuffers();
+  const kUp = 1-Math.exp(-dt/110), kDown = 1-Math.exp(-dt/260);
+  for(let k=0;k<world.state.length;k++){
+    const st = world.state[k];
+    const target = st===1 ? clamp(0.22+world.intensity[k]*0.95,0,1.25) : 0;
+    const cur = fireDisplay[k];
+    fireDisplay[k] = cur + (target-cur)*(target>cur?kUp:kDown);
+    const bt = st!==0 ? 1 : 0;
+    burnDisplay[k] = burnDisplay[k] + (bt-burnDisplay[k])*kUp;
+  }
+}
+
+/* Incandescence ramp: deep ember red -> orange -> yellow -> near-white core. */
+const FIRE_STOPS = [[60,12,6],[140,28,10],[214,66,16],[247,131,26],[255,193,74],[255,242,196]];
+/* Precomputed 256-entry LUT. Sampling the ramp per pixel used to allocate a
+   fresh [r,g,b] array for every sub-cell, every rebuild. */
+const FIRE_LUT = (function(){
+  const lut = new Uint8Array(256*3);
+  for(let k=0;k<256;k++){
+    const seg = (k/256)*(FIRE_STOPS.length-1);
+    const i0 = Math.floor(seg), t = smoothstep(seg-i0);
+    const a = FIRE_STOPS[i0], b = FIRE_STOPS[Math.min(i0+1,FIRE_STOPS.length-1)];
+    lut[k*3]   = lerp(a[0],b[0],t);
+    lut[k*3+1] = lerp(a[1],b[1],t);
+    lut[k*3+2] = lerp(a[2],b[2],t);
+  }
+  return lut;
+})();
+
+/* Field + contour cache. Resampling 72x72 cells into a 216x216 warped field and
+   running marching squares over it is far too expensive to redo at 60fps, and
+   pointless: the eased display changes over ~100-260ms, so refreshing the field
+   at 30Hz is visually identical. Work is further restricted to the fire's
+   bounding box, which is tiny for most of a run. The cached offscreen canvas
+   and segment lists are then re-painted every frame for free. */
+let fieldFire = null, fieldBurn = null, fieldFront = null;
+let segsPerimeter = [], segsFront = [];
+let lastFieldAt = -1e9;
+const FIELD_REFRESH_MS = 33;
+/** Force the next drawFire() to rebuild the field. Called on any state jump
+ *  (reset, scrub, scenario change) where the cached field is no longer valid. */
+function invalidateFireField(){ lastFieldAt = -1e9; }
+
+function fireBBox(){
+  let i0=GRID, j0=GRID, i1=-1, j1=-1;
+  for(let j=0;j<GRID;j++) for(let i=0;i<GRID;i++){
+    const k=j*GRID+i;
+    if(world.state[k]===0 && fireDisplay[k]<0.02 && burnDisplay[k]<0.02) continue;
+    if(i<i0)i0=i; if(i>i1)i1=i; if(j<j0)j0=j; if(j>j1)j1=j;
+  }
+  if(i1<0) return null;
+  return { i0:Math.max(0,i0-2), j0:Math.max(0,j0-2), i1:Math.min(GRID-1,i1+2), j1:Math.min(GRID-1,j1+2) };
+}
+
+function rebuildFireField(){
+  if(!fieldFire){
+    fieldFire = new Float32Array(FIELD*FIELD);
+    fieldBurn = new Float32Array(FIELD*FIELD);
+    fieldFront = new Float32Array(FIELD*FIELD);
+  }
+  fieldFire.fill(0); fieldBurn.fill(0); fieldFront.fill(0);
+  const bb = fireBBox();
+  if(!bb){ segsPerimeter=[]; segsFront=[]; fieldBox=null; return; }
+  fieldBox = bb;
+
+  // active front = cells that ignited within the last few simulated minutes
+  const frontAge = 4;
+  const front = new Float32Array(GRID*GRID);
+  for(const idx of world.activeList){
+    const age = simTime - world.arrival[idx];
+    if(age<=frontAge) front[idx] = 1 - age/(frontAge+1);
+  }
+  const a0=Math.max(0,bb.i0*SUB), a1=Math.min(FIELD-1,(bb.i1+1)*SUB);
+  const b0=Math.max(0,bb.j0*SUB), b1=Math.min(FIELD-1,(bb.j1+1)*SUB);
+  for(let b=b0;b<=b1;b++){
+    for(let a=a0;a<=a1;a++){
+      const w=b*FIELD+a;
+      const x=(a+0.5)/SUB - 0.5 + warpX[w];
+      const y=(b+0.5)/SUB - 0.5 + warpY[w];
+      fieldFire[w]  = sampleCells(fireDisplay, x, y);
+      fieldBurn[w]  = sampleCells(burnDisplay, x, y);
+      fieldFront[w] = sampleCells(front, x, y);
+    }
+  }
+  segsPerimeter = marchingSquaresBuf(fieldBurn, 0.5, bb);
+  segsFront     = marchingSquaresBuf(fieldFront, 0.34, bb);
+  rasteriseFireField(bb);
+}
+
+/** Paint the cached field into the offscreen canvas. Runs only when the field
+ *  is rebuilt (<=30Hz), not per frame -- per-frame this canvas is just blitted. */
+function rasteriseFireField(bb){
+  const px = fieldImg.data;
+  px.fill(0);
+  const showActive = layers.fireActive;
+  const showIntensity = layers.fireIntensity;
+  const a0=Math.max(0,bb.i0*SUB), a1=Math.min(FIELD-1,(bb.i1+1)*SUB);
+  const b0=Math.max(0,bb.j0*SUB), b1=Math.min(FIELD-1,(bb.j1+1)*SUB);
+  for(let b=b0;b<=b1;b++){
+    for(let a=a0;a<=a1;a++){
+      const w=b*FIELD+a, o=w*4;
+      const scar = fieldBurn[w];
+      let r=0,g=0,bl=0,al=0;
+      if(scar>0.04){
+        const k = clamp((scar-0.04)/0.5,0,1);
+        r=26; g=19; bl=16; al=k*0.90;                 // charred ground
+      }
+      if(showActive){
+        let inten = fieldFire[w];
+        if(!showIntensity && inten>0.02) inten = 0.75; // flat mode: uniform body
+        if(inten>0.03){
+          const li = (inten>=1 ? 255 : (inten*256)|0)*3;
+          const cr=FIRE_LUT[li], cg=FIRE_LUT[li+1], cb=FIRE_LUT[li+2];
+          // alpha ramps fast at the edge then saturates: crisp organic boundary,
+          // hot non-uniform interior
+          const e = inten/0.42; const es = e<0?0:e>1?1:e;
+          const fa = smoothstep(es)*0.97;
+          r = r+(cr-r)*fa; g = g+(cg-g)*fa; bl = bl+(cb-bl)*fa;
+          al = al>fa?al:fa;
+        }
+      }
+      px[o]=r|0; px[o+1]=g|0; px[o+2]=bl|0; px[o+3]=(al*255)|0;
+    }
+  }
+  fieldCtx.putImageData(fieldImg,0,0);
+}
+let fieldBox = null;
+
+function drawFire(){
+  ctxF.clearRect(0,0,cvF.width/mapDPR,cvF.height/mapDPR);
+  if(!world) return;
+  initWarp(); ensureFieldCanvas();
+  if(!fireDisplay) initFireBuffers();
+
+  const now = (typeof performance!=='undefined'?performance.now():Date.now());
+  if(now - lastFieldAt >= FIELD_REFRESH_MS){ rebuildFireField(); lastFieldAt = now; }
+  if(!fieldBox) return;
+
+  ctxF.imageSmoothingEnabled = true;
+  ctxF.imageSmoothingQuality = 'high';
+  ctxF.drawImage(fieldCanvas, 0, 0, cvF.width/mapDPR, cvF.height/mapDPR);
+
+  // --- active front: the advancing edge only ---
+  if(layers.fireActive && segsFront.length){
+    ctxF.save();
+    ctxF.globalCompositeOperation = 'lighter';
+    ctxF.strokeStyle = 'rgba(255,238,190,0.85)';
+    ctxF.lineWidth = Math.max(1.2, cell*0.32);
+    ctxF.lineCap='round'; ctxF.lineJoin='round';
+    ctxF.shadowColor = 'rgba(255,150,40,0.9)';
+    ctxF.shadowBlur = Math.max(4, cell*1.6);
+    ctxF.beginPath();
+    for(const [p,q] of segsFront){ ctxF.moveTo(p[0]*cell,p[1]*cell); ctxF.lineTo(q[0]*cell,q[1]*cell); }
+    ctxF.stroke();
+    ctxF.restore();
+  }
+
+  // --- discrete spot fires: separate spatial events, not noise ---
+  if(layers.spotFires){
+    const seen = [];
+    for(const idx of world.activeList){
+      if(!world.isSpot[idx]) continue;
+      const j = Math.floor(idx/GRID), i = idx%GRID;
+      let clustered=false;
+      for(const k of seen){ if(Math.abs(k[0]-i)<3 && Math.abs(k[1]-j)<3){ clustered=true; break; } }
+      if(clustered) continue;
+      seen.push([i,j]);
+      const age = simTime - world.arrival[idx];
+      const pulse = prefersReducedMotion ? 1 : 0.78 + 0.22*Math.sin(now/320 + idx);
+      const R = cell*(1.9 + Math.min(age,8)*0.16)*pulse;
+      const cx=(i+0.5)*cell, cy=(j+0.5)*cell;
+      const grad = ctxF.createRadialGradient(cx,cy,0,cx,cy,R);
+      grad.addColorStop(0,'rgba(255,248,214,0.95)');
+      grad.addColorStop(0.32,'rgba(255,176,48,0.55)');
+      grad.addColorStop(1,'rgba(255,120,20,0)');
+      ctxF.save();
+      ctxF.globalCompositeOperation='lighter';
+      ctxF.fillStyle=grad;
+      ctxF.beginPath(); ctxF.arc(cx,cy,R,0,7); ctxF.fill();
+      ctxF.strokeStyle='rgba(255,224,150,0.9)'; ctxF.lineWidth=1;
+      ctxF.beginPath(); ctxF.arc(cx,cy,Math.max(1.6,cell*0.45),0,7); ctxF.stroke();
+      ctxF.restore();
+    }
+  }
+
+  // --- organic perimeter contour ---
+  if(layers.firePerimeter && segsPerimeter.length){
+    ctxF.strokeStyle='rgba(255,152,64,0.92)';
+    ctxF.lineWidth=Math.max(1.2, cell*0.22);
+    ctxF.lineJoin='round'; ctxF.lineCap='round';
+    ctxF.beginPath();
+    for(const [p,q] of segsPerimeter){ ctxF.moveTo(p[0]*cell,p[1]*cell); ctxF.lineTo(q[0]*cell,q[1]*cell); }
+    ctxF.stroke();
+  }
+
+  if(layers.thermalProxy) drawThermalProxy();
+}
+
+/* Marching-squares edge pairs, indexed by corner code. Edge ids: 0=top,
+   1=right, 2=bottom, 3=left. Flat arrays so the inner loop allocates nothing. */
+const MS_CASES = { 1:[3,2],2:[2,1],3:[3,1],4:[0,1],5:[0,3,2,1],6:[0,2],7:[0,3],
+                   8:[0,3],9:[0,2],10:[0,1,2,3],11:[0,1],12:[3,1],13:[2,1],14:[3,2] };
+
+/**
+ * Marching squares over a precomputed sub-cell field, restricted to the fire's
+ * bounding box. Returns segments in grid coordinates. Because it contours the
+ * continuous warped field rather than the raw 0/1 cell mask, the outline is a
+ * smooth irregular curve that still hugs the true burnt cells.
+ */
+function marchingSquaresBuf(buf, iso, bb){
+  const segs=[];
+  const a0=Math.max(0,bb.i0*SUB), a1=Math.min(FIELD-2,(bb.i1+1)*SUB);
+  const b0=Math.max(0,bb.j0*SUB), b1=Math.min(FIELD-2,(bb.j1+1)*SUB);
+  const inv = 1/SUB, off = -0.5 + 0.5/SUB;
+  for(let b=b0;b<=b1;b++){
+    for(let a=a0;a<=a1;a++){
+      const w=b*FIELD+a;
+      const v00=buf[w], v10=buf[w+1], v11=buf[w+FIELD+1], v01=buf[w+FIELD];
+      const c = (v00>iso?8:0)|(v10>iso?4:0)|(v11>iso?2:0)|(v01>iso?1:0);
+      if(c===0||c===15) continue;
+      const codes = MS_CASES[c];
+      // linear interpolation of the crossing point along each cell edge
+      const dT=v10-v00, dR=v11-v10, dB=v11-v01, dL=v01-v00;
+      const tT = Math.abs(dT)<1e-6?0.5:clamp((iso-v00)/dT,0,1);
+      const tR = Math.abs(dR)<1e-6?0.5:clamp((iso-v10)/dR,0,1);
+      const tB = Math.abs(dB)<1e-6?0.5:clamp((iso-v01)/dB,0,1);
+      const tL = Math.abs(dL)<1e-6?0.5:clamp((iso-v00)/dL,0,1);
+      // 0=top 1=right 2=bottom 3=left, in grid coordinates
+      const ex=[ (a+tT)*inv+off, (a+1)*inv+off, (a+tB)*inv+off, a*inv+off ];
+      const ey=[ b*inv+off, (b+tR)*inv+off, (b+1)*inv+off, (b+tL)*inv+off ];
+      for(let q=0;q<codes.length;q+=2){
+        const p=codes[q], r=codes[q+1];
+        segs.push([[ex[p],ey[p]],[ex[r],ey[r]]]);
+      }
+    }
+  }
+  return segs;
+}
+
+/**
+ * Experimental "thermal proxy" layer: a heuristic residual-heat overlay
+ * derived from the simulation itself (recently burned cells cool down over
+ * a decay window; active cells run hot). This is NOT live Landsat/VIIRS
+ * thermal imagery -- there is no live thermal feed in this build -- it's a
+ * decay model over simulation state, rendered with a false-color thermal
+ * palette so the distinction from the primary fire-intensity layer (which
+ * shows instantaneous state) is visually obvious.
+ */
+const THERMAL_DECAY_TICKS = 45;
+function thermalPalette(v){
+  // Deliberately distinct from the primary fire palette (which is orange/red)
+  // so toggling this layer reads as a genuinely different instrument, the way
+  // a real thermal camera looks different from true-color imagery: cool dark
+  // purple -> magenta -> red-orange -> amber -> white-hot.
+  const stops = [[8,4,28],[130,10,110],[255,70,40],[255,170,60],[255,250,235]];
+  const seg = clamp(v,0,0.999)*(stops.length-1);
+  const i0 = Math.floor(seg), t = seg-i0;
+  const a = stops[i0], b = stops[Math.min(i0+1,stops.length-1)];
+  return [Math.round(lerp(a[0],b[0],t)),Math.round(lerp(a[1],b[1],t)),Math.round(lerp(a[2],b[2],t))];
+}
+function drawThermalProxy(){
+  for(let j=0;j<GRID;j++){
+    for(let i=0;i<GRID;i++){
+      const idx=j*GRID+i;
+      const st = world.state[idx];
+      if(st===0) continue;
+      let heat;
+      if(st===1) heat = 0.62 + world.intensity[idx]*0.38; // active: amber -> white-hot
+      else {
+        const age = simTime - world.arrival[idx];
+        heat = Math.exp(-age/THERMAL_DECAY_TICKS) * 0.6; // burned: fading purple/magenta residual heat
+      }
+      if(heat<0.03) continue;
+      const col = thermalPalette(heat);
+      ctxF.fillStyle = 'rgba('+col[0]+','+col[1]+','+col[2]+','+clamp(0.55+heat*0.4,0,0.95)+')';
+      ctxF.fillRect(i*cell,j*cell,cell+0.6,cell+0.6);
+    }
+  }
+}
+function lerpColor(a,b,t){ return [Math.round(lerp(a[0],b[0],t)),Math.round(lerp(a[1],b[1],t)),Math.round(lerp(a[2],b[2],t))]; }
+
+let windPhase = 0;
+/** Stroke a dark halo behind fillText so labels stay legible over fire,
+ *  bright terrain, or a busy road network -- plain fillText was unreadable
+ *  once anything colorful sat behind the community/safe-zone labels. */
+function haloText(ctx, text, x, y){
+  ctx.lineJoin='round';
+  ctx.strokeStyle='rgba(4,5,6,0.85)'; ctx.lineWidth=3;
+  ctx.strokeText(text, x, y);
+  ctx.fillText(text, x, y);
+}
+function drawInfra(){
+  ctxI.clearRect(0,0,cvI.width/mapDPR,cvI.height/mapDPR);
+  /* Wind: advecting flow streaks along the true travel bearing, with length
+     and drift speed both driven by env.windSpeed, so "the fire is moving that
+     way because the wind is doing this" is directly readable off the map. */
+  if(layers.wind){
+    const rad = deg2rad(windTravelBearing());
+    const ux=Math.sin(rad), uy=-Math.cos(rad);
+    const spacing = 7;
+    const len = cell*(1.4 + env.windSpeed/80*3.4);
+    const span = spacing*cell;
+    ctxI.lineCap='round';
+    for(let j=0;j<GRID+spacing;j+=spacing){
+      for(let i=0;i<GRID+spacing;i+=spacing){
+        // deterministic per-streak offset so they don't march in lockstep
+        const seedOff = ((i*73856093)^(j*19349663))%1000/1000;
+        const travel = ((windPhase + seedOff)%1)*span;
+        const bx=(i-spacing/2)*cell + ux*travel, by=(j-spacing/2)*cell + uy*travel;
+        if(bx<-span||by<-span||bx>cvI.width/mapDPR+span||by>cvI.height/mapDPR+span) continue;
+        const fade = Math.sin(((windPhase+seedOff)%1)*Math.PI); // fade in/out along the path
+        ctxI.strokeStyle='rgba(126,186,255,'+(0.10+0.28*fade).toFixed(3)+')';
+        ctxI.lineWidth=1.1;
+        ctxI.beginPath(); ctxI.moveTo(bx,by); ctxI.lineTo(bx+ux*len, by+uy*len); ctxI.stroke();
+        ctxI.fillStyle='rgba(150,200,255,'+(0.18+0.42*fade).toFixed(3)+')';
+        ctxI.beginPath(); ctxI.arc(bx+ux*len, by+uy*len, 1.25, 0, 7); ctxI.fill();
+      }
+    }
+  }
+  // roads
+  if(layers.roads){
+    const now = typeof performance!=='undefined'?performance.now():Date.now();
+    /* Casing pass: a dark outline stroked under every road BEFORE the colored
+       status strokes. Without it, a light-grey SAFE road over dark terrain
+       (or the near-black burn scar once fire passes through) loses almost
+       all contrast and the network reads as gappy. Drawn as one pass over
+       all roads first so casings never overpaint a neighbouring road's
+       already-drawn status color. */
+    ctxI.lineCap='round'; ctxI.lineJoin='round';
+    ctxI.shadowBlur=0;
+    ctxI.strokeStyle='rgba(6,8,10,0.85)';
+    for(const r of roads){
+      const def = ROAD_DEFS.find(d=>d.id===r.id);
+      const w = def.cls==='highway'?3:def.cls==='secondary'?2:1.3;
+      ctxI.lineWidth = w + 2.2;
+      ctxI.beginPath();
+      def.pts.forEach((p,k)=>{ if(k===0) ctxI.moveTo(p[0]*cell,p[1]*cell); else ctxI.lineTo(p[0]*cell,p[1]*cell); });
+      ctxI.stroke();
+    }
+    for(const r of roads){
+      const def = ROAD_DEFS.find(d=>d.id===r.id);
+      const w = def.cls==='highway'?3:def.cls==='secondary'?2:1.3;
+      const statusColor = r.status==='BLOCKED' ? 'rgba(255,71,87,0.9)' :
+                          r.status==='THREATENED' ? 'rgba(255,107,53,0.9)' :
+                          r.status==='WATCH' ? 'rgba(245,194,68,0.85)' : 'rgba(200,208,214,0.55)';
+      const pulsing = !prefersReducedMotion && roadPulseUntil[r.id] && now < roadPulseUntil[r.id];
+      if(pulsing){
+        const remain = (roadPulseUntil[r.id]-now)/1700; // 1 -> 0
+        ctxI.lineWidth = w + 4*remain;
+        ctxI.shadowColor = statusColor;
+        ctxI.shadowBlur = 14*remain;
+      } else {
+        ctxI.lineWidth = w;
+        ctxI.shadowBlur = 0;
+      }
+      ctxI.strokeStyle = statusColor;
+      ctxI.beginPath();
+      def.pts.forEach((p,k)=>{ if(k===0) ctxI.moveTo(p[0]*cell,p[1]*cell); else ctxI.lineTo(p[0]*cell,p[1]*cell); });
+      ctxI.stroke();
+      ctxI.shadowBlur=0;
+    }
+  }
+  // routes
+  if(layers.routes){
+    for(const c of COMMUNITIES){
+      const res = currentRoutes[c.id];
+      if(!res) continue;
+      // Draw the exact graph edges Dijkstra returned. Previously this painted
+      // each road's ENTIRE polyline, so the highlighted "route" included
+      // stretches of road the evacuation never actually uses.
+      ctxI.setLineDash([]); ctxI.lineCap='round'; ctxI.lineJoin='round';
+      const buildPath = () => {
+        ctxI.beginPath();
+        for(const e of res.path){
+          ctxI.moveTo(e.pts[0][0]*cell, e.pts[0][1]*cell);
+          ctxI.lineTo(e.pts[1][0]*cell, e.pts[1][1]*cell);
+        }
+      };
+      // thin dark casing first, for contrast over bright fire/terrain alike
+      ctxI.strokeStyle='rgba(5,10,8,0.55)'; ctxI.lineWidth=5.4; ctxI.shadowBlur=0;
+      buildPath(); ctxI.stroke();
+      ctxI.lineWidth=3.4;
+      ctxI.strokeStyle='rgba(47,217,138,0.9)';
+      ctxI.shadowColor='rgba(47,217,138,0.6)'; ctxI.shadowBlur=4;
+      buildPath(); ctxI.stroke();
+      ctxI.shadowBlur=0;
+    }
+  }
+  // communities
+  if(layers.communities){
+    for(const c of COMMUNITIES){
+      const [x,y]=c.node;
+      ctxI.fillStyle='#dfe6ea';
+      ctxI.strokeStyle='rgba(0,0,0,0.5)'; ctxI.lineWidth=1.5;
+      ctxI.beginPath(); ctxI.arc(x*cell,y*cell,4.5,0,7); ctxI.fill(); ctxI.stroke();
+      ctxI.fillStyle='rgba(234,240,244,0.95)';
+      ctxI.font='10px ui-monospace, monospace';
+      haloText(ctxI, c.name.toUpperCase(), x*cell+8, y*cell+3);
+    }
+    // safe zone marker
+    ctxI.fillStyle='rgba(47,217,138,0.95)';
+    ctxI.beginPath(); ctxI.arc(70*cell,70*cell,5,0,7); ctxI.fill();
+    ctxI.font='9px ui-monospace, monospace'; ctxI.fillStyle='rgba(80,255,180,1)';
+    haloText(ctxI, 'SAFE ZONE', 70*cell-38, 70*cell-8);
+  }
+}
+
+let firebreakDraft = [];
+function drawInteract(){
+  ctxX.clearRect(0,0,cvX.width/mapDPR,cvX.height/mapDPR);
+  // existing firebreaks
+  ctxX.strokeStyle='rgba(120,255,190,0.8)'; ctxX.lineWidth=3; ctxX.lineCap='round';
+  for(const seg of firebreakSegments){
+    ctxX.beginPath();
+    ctxX.moveTo(seg[0][0]*cell, seg[0][1]*cell);
+    ctxX.lineTo(seg[1][0]*cell, seg[1][1]*cell);
+    ctxX.stroke();
+  }
+  if(drawingFirebreak && firebreakDraft.length>1){
+    ctxX.strokeStyle='rgba(47,217,138,0.9)'; ctxX.lineWidth=2; ctxX.setLineDash([4,3]);
+    ctxX.beginPath();
+    firebreakDraft.forEach((p,k)=>{ if(k===0) ctxX.moveTo(p[0]*cell,p[1]*cell); else ctxX.lineTo(p[0]*cell,p[1]*cell); });
+    ctxX.stroke(); ctxX.setLineDash([]);
+  }
+  if(selectedMarker){
+    ctxX.strokeStyle='#ffffff'; ctxX.lineWidth=1.5;
+    ctxX.beginPath(); ctxX.arc(selectedMarker[0]*cell, selectedMarker[1]*cell, 7,0,7); ctxX.stroke();
+  }
+}
+let firebreakSegments = [];
+
+/** Canvas-only redraw. Safe to run every animation frame. */
+function renderCanvas(){
+  if(!world || !roads) return;
+  drawFire(); drawInfra(); drawInteract();
+}
+/** Full redraw including DOM. Only called on a simulation tick or a user
+ *  action -- rebuilding the road list at 60fps was pure DOM churn. */
+function renderAll(){
+  if(!world || !roads) return;
+  renderCanvas();
+  renderRoadList();
+  updateCompass();
+}
+
+/* =========================================================================
+   7. FIREBREAK INTERACTION
+   ========================================================================= */
+let drawingFirebreak=false;
+document.getElementById('btn-firebreak').addEventListener('click', ()=>{
+  drawingFirebreak = !drawingFirebreak;
+  const fbBtn = document.getElementById('btn-firebreak');
+  fbBtn.classList.toggle('primary', drawingFirebreak);
+  fbBtn.setAttribute('aria-pressed', drawingFirebreak ? 'true':'false');
+  document.getElementById('firebreak-hint').style.display = drawingFirebreak ? 'block':'none';
+  fbBtn.textContent = drawingFirebreak ? 'Cancel Drawing' : 'Add Firebreak';
+});
+let dragging=false;
+/* =========================================================================
+   MAP ZOOM + PAN
+   -------------------------------------------------------------------------
+   Purely a CSS transform on #mapstage (which holds all 4 canvases) -- no
+   drawing code anywhere changes. pxToGrid() above already reads the live,
+   transform-aware getBoundingClientRect(), so click-to-inspect, hover, and
+   firebreak drawing all keep working unchanged at any zoom/pan.
+
+   Panning reuses the SAME mousedown/mousemove/mouseup chain that already
+   handles firebreak drawing and click-to-inspect, rather than adding a
+   second competing set of listeners. The rule is: drawingFirebreak wins
+   outright (unchanged behavior); otherwise, a mousedown starts a "pan
+   candidate", and only escalates to an actual pan once the pointer has
+   moved a few pixels -- a mousedown+mouseup with no real movement is still
+   treated as the original single click (handleMapClick), so nothing about
+   the existing click-to-inspect interaction is disturbed.
+   ========================================================================= */
+const ZOOM_MIN = 0.6, ZOOM_MAX = 4;
+let mapView = { scale:1, tx:0, ty:0 };
+function applyMapTransform(){
+  document.getElementById('mapstage').style.transform =
+    'translate('+mapView.tx+'px,'+mapView.ty+'px) scale('+mapView.scale+')';
+}
+/** Zoom by `factor`, keeping whatever is currently at the center of the
+ *  visible #mapwrap viewport visually fixed in place. */
+function zoomBy(factor, anchorPx){
+  const rect = document.getElementById('mapwrap').getBoundingClientRect();
+  const ax = anchorPx ? anchorPx[0]-rect.left : rect.width/2;
+  const ay = anchorPx ? anchorPx[1]-rect.top  : rect.height/2;
+  const newScale = clamp(mapView.scale*factor, ZOOM_MIN, ZOOM_MAX);
+  if(newScale === mapView.scale) return;
+  const worldX = (ax-mapView.tx)/mapView.scale, worldY = (ay-mapView.ty)/mapView.scale;
+  mapView.scale = newScale;
+  mapView.tx = ax - worldX*newScale;
+  mapView.ty = ay - worldY*newScale;
+  applyMapTransform();
+}
+function resetMapView(){ mapView = {scale:1, tx:0, ty:0}; applyMapTransform(); }
+document.getElementById('btn-zoom-in').addEventListener('click', ()=>zoomBy(1.35));
+document.getElementById('btn-zoom-out').addEventListener('click', ()=>zoomBy(1/1.35));
+document.getElementById('btn-zoom-reset').addEventListener('click', resetMapView);
+document.getElementById('mapwrap').addEventListener('wheel', (e)=>{
+  e.preventDefault();
+  zoomBy(e.deltaY<0 ? 1.12 : 1/1.12, [e.clientX, e.clientY]);
+}, {passive:false});
+
+let panCandidate = null;   // {startX,startY,tx0,ty0} while a mousedown is held
+let didPan = false;        // set true once movement crosses the click/drag threshold
+const PAN_THRESHOLD_PX = 4;
+cvX.addEventListener('mousedown', e=>{
+  const p = pxToGrid(e);
+  if(drawingFirebreak){ dragging=true; firebreakDraft=[p]; return; }
+  panCandidate = { startX:e.clientX, startY:e.clientY, tx0:mapView.tx, ty0:mapView.ty };
+  didPan = false;
+});
+cvX.addEventListener('mousemove', e=>{
+  const p = pxToGrid(e);
+  if(dragging && drawingFirebreak){ firebreakDraft.push(p); drawInteract(); return; }
+  if(panCandidate){
+    const dx = e.clientX-panCandidate.startX, dy = e.clientY-panCandidate.startY;
+    if(didPan || Math.hypot(dx,dy) > PAN_THRESHOLD_PX){
+      didPan = true;
+      mapView.tx = panCandidate.tx0 + dx;
+      mapView.ty = panCandidate.ty0 + dy;
+      applyMapTransform();
+      document.getElementById('mapstage').classList.add('panning');
+      return; // don't also update the hover tooltip mid-pan
+    }
+  }
+  showHoverTooltip(e,p);
+});
+window.addEventListener('mouseup', e=>{
+  if(dragging && drawingFirebreak){
+    dragging=false;
+    if(firebreakDraft.length>1){
+      for(let k=0;k<firebreakDraft.length-1;k++) firebreakSegments.push([firebreakDraft[k],firebreakDraft[k+1]]);
+      // Recorded against the current simulated minute so it survives scrubbing.
+      recordIntervention({ at:simTime, type:'firebreak', data:{pts:firebreakDraft.slice(), halfWidth:1}, live:true });
+      let cut=0; for(let k=0;k<world.intervention.length;k++) if(world.intervention[k]<0.5) cut++;
+      pushEvent('system','FIREBREAK DEPLOYED','Cut at +'+simTime+' min. '+cut+' cells now at propagation multiplier 0.03.');
+      showToast('firebreak','Firebreak Deployed','Local propagation multiplier reduced to near zero.');
+      updateRoadStatuses(simTime); recomputeMetrics(simTime);
+    }
+    firebreakDraft=[];
+    drawingFirebreak=false;
+    const fbBtn = document.getElementById('btn-firebreak');
+    fbBtn.classList.remove('primary');
+    fbBtn.setAttribute('aria-pressed','false');
+    fbBtn.textContent='Add Firebreak';
+    document.getElementById('firebreak-hint').style.display='none';
+    return;
+  }
+  if(panCandidate && !didPan){
+    // No real movement occurred: treat exactly as the original single click.
+    handleMapClick(pxToGrid(e));
+  }
+  panCandidate = null;
+  document.getElementById('mapstage').classList.remove('panning');
+});
+/** Cut a containment line into world.intervention (the propagation multiplier
+ *  read by stepSimulation). halfWidth 1 = a 3-cell hand line (user-drawn
+ *  default); halfWidth 2 = a 5-cell dozer line, used by the guided demo. */
+function applyFirebreak(pathPts, halfWidth){
+  const hw = halfWidth || 1;
+  for(let k=0;k<pathPts.length-1;k++){
+    const a=pathPts[k], b=pathPts[k+1];
+    const steps = Math.max(1, Math.round(Math.hypot(b[0]-a[0],b[1]-a[1])*2));
+    for(let s=0;s<=steps;s++){
+      const x = Math.round(lerp(a[0],b[0],s/steps));
+      const y = Math.round(lerp(a[1],b[1],s/steps));
+      for(let dx=-hw;dx<=hw;dx++) for(let dy=-hw;dy<=hw;dy++){
+        const xi=x+dx, yi=y+dy;
+        if(xi>=0&&yi>=0&&xi<GRID&&yi<GRID) world.intervention[yi*GRID+xi] = 0.03;
+      }
+    }
+  }
+}
+function pxToGrid(e){
+  // Ratio-based rather than dividing by `cell` directly: getBoundingClientRect()
+  // already reflects any CSS transform applied to #mapstage (zoom/pan), so
+  // this stays correct at any zoom level or pan offset with no other change.
+  const rect = cvX.getBoundingClientRect();
+  return [ (e.clientX-rect.left)/rect.width*GRID, (e.clientY-rect.top)/rect.height*GRID ];
+}
+
+let selectedMarker = null;
+function handleMapClick(p){
+  // check communities
+  for(const c of COMMUNITIES){
+    if(Math.hypot(c.node[0]-p[0], c.node[1]-p[1]) < 3){ openInspectorCommunity(c); selectedMarker=c.node; drawInteract(); return; }
+  }
+  // check roads (nearest sampled point)
+  let best=null, bestD=999;
+  for(const r of roads){
+    for(const sp of r.sampled){
+      const d = Math.hypot(sp[0]-p[0], sp[1]-p[1]);
+      if(d<bestD){ bestD=d; best={road:r, pt:sp}; }
+    }
+  }
+  if(best && bestD<2.2){ openInspectorRoad(best.road); selectedMarker=best.pt; drawInteract(); return; }
+}
+function showHoverTooltip(e,p){
+  const tip = document.getElementById('tooltip');
+  let found=null;
+  for(const r of roads){
+    for(const sp of r.sampled){ if(Math.hypot(sp[0]-p[0],sp[1]-p[1])<1.6){ found=r; break; } }
+    if(found) break;
+  }
+  if(found){
+    tip.style.display='block';
+    tip.style.left=(e.clientX+12)+'px'; tip.style.top=(e.clientY+12)+'px';
+    tip.innerHTML = '<b>'+found.name+'</b><br>'+found.status+(found.eta!=null?' · ETA '+found.eta+'m':'');
+  } else tip.style.display='none';
+}
+
+/* =========================================================================
+   8. UI WIRING
+   ========================================================================= */
+const STATUS_COLOR_VAR = { SAFE:'rgba(47,217,138,0.6)', WATCH:'rgba(245,194,68,0.6)', THREATENED:'rgba(255,107,53,0.6)', BLOCKED:'rgba(255,71,87,0.6)' };
+/**
+ * Drag-to-resize divider between "Network Status" (the road list) and
+ * "Intelligence Feed". The road list can otherwise grow tall enough (11
+ * roads, each several lines) to squeeze the feed down to a sliver on a
+ * shorter screen -- this hands the user direct control instead of a fixed
+ * split. #rp-network keeps flex:0 0 auto with an explicit height once
+ * resized (overriding its default max-height); the feed's section keeps
+ * flex:1, so it automatically absorbs whatever height #rp-network gives up.
+ */
+(function initPanelResizer(){
+  const handle = document.getElementById('rp-resizer');
+  const panel = document.getElementById('rp-network');
+  const right = document.getElementById('right');
+  const MIN_PANEL = 44, MIN_FEED = 80;
+  function clampHeight(h){
+    const max = right.getBoundingClientRect().height - MIN_FEED - handle.getBoundingClientRect().height;
+    return clamp(h, MIN_PANEL, Math.max(MIN_PANEL, max));
+  }
+  function setHeight(h){
+    panel.style.maxHeight = 'none';
+    panel.style.height = clampHeight(h) + 'px';
+  }
+  let startY=0, startH=0, active=false;
+  handle.addEventListener('mousedown', e=>{
+    active=true; startY=e.clientY; startH=panel.getBoundingClientRect().height;
+    handle.classList.add('active');
+    e.preventDefault();
+  });
+  window.addEventListener('mousemove', e=>{
+    if(!active) return;
+    setHeight(startH + (e.clientY-startY));
+  });
+  window.addEventListener('mouseup', ()=>{ active=false; handle.classList.remove('active'); });
+  handle.addEventListener('keydown', e=>{
+    const cur = panel.getBoundingClientRect().height;
+    if(e.key==='ArrowUp'){ setHeight(cur-20); e.preventDefault(); }
+    else if(e.key==='ArrowDown'){ setHeight(cur+20); e.preventDefault(); }
+  });
+})();
+
+function renderRoadList(){
+  const list = document.getElementById('road-list');
+  list.innerHTML='';
+  const order = {BLOCKED:0,THREATENED:1,WATCH:2,SAFE:3};
+  const sorted = [...roads].sort((a,b)=>order[a.status]-order[b.status]);
+  const now = typeof performance!=='undefined'?performance.now():Date.now();
+  for(const r of sorted){
+    const row = document.createElement('div');
+    row.className='road-row';
+    row.setAttribute('role','button');
+    row.setAttribute('tabindex','0');
+    row.setAttribute('aria-label', r.name+', status '+r.status+(r.eta!=null?', ETA '+r.eta+' minutes':''));
+    if(!prefersReducedMotion && roadPulseUntil[r.id] && now < roadPulseUntil[r.id]){
+      row.classList.add('pulse');
+      row.style.setProperty('--pulse-color', STATUS_COLOR_VAR[r.status] || STATUS_COLOR_VAR.SAFE);
+    }
+    row.innerHTML = '<div class="top"><span class="name">'+r.name+'</span><span class="badge '+r.status+'">'+r.status+'</span></div>'+
+      '<div class="meta">'+(r.eta!=null? 'ETA '+String(Math.floor(r.eta/60)).padStart(2,'0')+':'+String(r.eta%60).padStart(2,'0') : (r.status==='BLOCKED'?'IMPASSABLE':'clear corridor'))+'</div>';
+    row.addEventListener('click', ()=>openInspectorRoad(r));
+    row.addEventListener('keydown', e=>{ if(e.key==='Enter' || e.key===' '){ e.preventDefault(); openInspectorRoad(r); } });
+    list.appendChild(row);
+  }
+}
+
+function openInspectorRoad(r){
+  const insp = document.getElementById('inspector');
+  document.getElementById('insp-title').textContent = r.name;
+  const reasons = [];
+  if(r.manualClosed){
+    reasons.push('Closed manually by operator — excluded from the routing graph regardless of fire proximity.');
+  } else {
+    if(r.status==='BLOCKED') reasons.push('Fire perimeter intersects or is within '+THRESH.blocked.toFixed(1)+' cells of the corridor.');
+    else if(r.status==='THREATENED') reasons.push('Projected fire front within '+THRESH.threatened+' cells.');
+    else if(r.status==='WATCH') reasons.push('Fire front approaching within '+THRESH.watch+' cells.');
+    else reasons.push('No active fire within monitored radius.');
+    reasons.push('Nearest fire distance: '+gridToKm(r.minDist).toFixed(2)+' km ('+r.minDist.toFixed(1)+' cells at '+(CELL_KM*1000)+' m/cell).');
+    if(r.eta!=null) reasons.push('Projected arrival at the '+gridToKm(THRESH.blocked).toFixed(2)+' km closure radius: '+r.eta+' min, from the measured perimeter growth rate of '+world.perimeterGrowthRate.toFixed(2)+' cells/min.');
+    reasons.push('Wind currently '+Math.round(env.windDir)+'°, blowing toward '+Math.round(windTravelBearing())+'°, at '+env.windSpeed+' km/h.');
+  }
+  const alt = findAlternative(r);
+  document.getElementById('insp-body').innerHTML =
+    '<div class="kv"><span class="k">Class</span><span class="v">'+r.cls.toUpperCase()+'</span></div>'+
+    '<div class="kv"><span class="k">Status</span><span class="v badge '+r.status+'" style="display:inline-block;">'+r.status+'</span></div>'+
+    '<div class="kv"><span class="k">Nearest fire</span><span class="v">'+gridToKm(r.minDist).toFixed(2)+' km</span></div>'+
+    '<div class="kv"><span class="k">ETA to threat</span><span class="v">'+(r.eta!=null?r.eta+'m':'—')+'</span></div>'+
+    '<div class="block-title" style="margin-top:12px;">Why this status?</div>'+
+    '<ul class="why-list">'+reasons.map(x=>'<li>'+x+'</li>').join('')+'</ul>'+
+    (alt? '<div class="block-title" style="margin-top:12px;">If this road is blocked</div><div style="font-size:11.5px; color:var(--text-dim); line-height:1.6;">'+alt+'</div>':'')+
+    '<button class="subtle-btn danger" id="btn-close-road">'+(r.manualClosed?'Reopen Road':'Close Road')+'</button>';
+  document.getElementById('btn-close-road').onclick = ()=>{
+    r.manualClosed = !r.manualClosed;
+    pushEvent('system', r.name.toUpperCase()+(r.manualClosed?' MANUALLY CLOSED':' REOPENED'), r.manualClosed?'Operator-initiated closure.':'Reopened by operator.');
+    updateRoadStatuses(simTime); recomputeMetrics(simTime); renderAll();
+    openInspectorRoad(r);
+  };
+  insp.style.display='block';
+}
+/**
+ * Determine which communities currently route through this road, and what
+ * the actual routing engine would compute for them if the road were
+ * blocked — rather than guessing "the next SAFE road" heuristically (§45).
+ * Runs a real Dijkstra pass with this edge's status forced to BLOCKED.
+ */
+function findAlternative(r){
+  const affected = COMMUNITIES.filter(c=>{
+    const res = currentRoutes[c.id];
+    return res && res.path.some(e=>e.id===r.id);
+  });
+  if(affected.length===0) return null;
+  const originalStatus = r.status;
+  r.status = 'BLOCKED';
+  const lines = affected.map(c=>{
+    const alt = dijkstra(keyOf(c.node), SAFE_ZONE_NODE_KEY);
+    return c.name+': '+(alt ? routeLabel(alt) : 'would be ISOLATED — no alternate corridor exists');
+  });
+  r.status = originalStatus;
+  return lines.join('<br>');
+}
+function openInspectorCommunity(c){
+  const insp = document.getElementById('inspector');
+  document.getElementById('insp-title').textContent = c.name;
+  const res = currentRoutes[c.id];
+  const path = res ? routeLabel(res) : 'NO SAFE ROUTE FOUND';
+  const segIds = []; if(res) for(const e of res.path) if(segIds[segIds.length-1]!==e.id) segIds.push(e.id);
+  const segmentRows = segIds.map(id=>{
+    const rt = roads.find(x=>x.id===id);
+    return '<div class="kv"><span class="k">'+rt.name+'</span><span class="v badge '+rt.status+'" style="display:inline-block;">'+rt.status+'</span></div>';
+  }).join('');
+  const nonSafe = segIds.filter(id=>{ const rt=roads.find(x=>x.id===id); return rt.status!=='SAFE'; });
+  const whyNote = nonSafe.length
+    ? '<p style="font-size:11px; color:var(--text-dim); margin:8px 0 0;">Route includes '+nonSafe.length+' non-SAFE segment(s), which raises travel cost but was still the lowest-risk path available.</p>'
+    : (res ? '<p style="font-size:11px; color:var(--text-dim); margin:8px 0 0;">Entire route is currently SAFE.</p>' : '');
+  document.getElementById('insp-body').innerHTML =
+    '<div class="kv"><span class="k">Population (demo)</span><span class="v">'+c.pop.toLocaleString()+'</span></div>'+
+    '<div class="kv"><span class="k">Accessibility</span><span class="v">'+(res?'ACCESSIBLE':'ISOLATED')+'</span></div>'+
+    '<div class="kv"><span class="k">Est. travel cost</span><span class="v">'+(res? res.cost.toFixed(1):'—')+'</span></div>'+
+    '<div class="block-title" style="margin-top:12px;">Evacuation route</div>'+
+    '<div style="font-size:11.5px; color:var(--text-dim); line-height:1.5; margin-bottom:6px;">'+path+'</div>'+
+    segmentRows + whyNote;
+  insp.style.display='block';
+}
+
+function updateCompass(){
+  const c = document.getElementById('compass');
+  const rad = deg2rad(windTravelBearing());
+  const cx=28, cy=28, len=20;
+  const x2 = cx + Math.sin(rad)*len, y2 = cy - Math.cos(rad)*len;
+  c.innerHTML = '<svg width="56" height="56" viewBox="0 0 56 56">'+
+    '<circle cx="28" cy="28" r="24" fill="none" stroke="rgba(255,255,255,0.12)"/>'+
+    '<line x1="28" y1="28" x2="'+x2+'" y2="'+y2+'" stroke="var(--fire)" stroke-width="2.4" stroke-linecap="round"/>'+
+    '<circle cx="'+x2+'" cy="'+y2+'" r="3" fill="var(--fire)"/>'+
+    '<text x="28" y="9" font-size="7" fill="rgba(255,255,255,0.35)" text-anchor="middle">N</text>'+
+    '</svg>';
+}
+
+/* dryness label */
+function drynessLabel(){
+  if(env.humidity<25) return 'DRY';
+  if(env.humidity<55) return 'MODERATE';
+  return 'WET';
+}
+function updateEnvUI(){
+  const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+  const idx = Math.round(env.windDir/22.5)%16;
+  setText('e-winddir', dirs[idx]+' → '+dirs[(idx+8)%16]);
+  setText('e-windspd', env.windSpeed+' km/h');
+  setText('e-temp', env.temperature+'°C');
+  setText('e-hum', env.humidity+'%');
+  setText('e-dryness', 'Fuel: '+drynessLabel());
+  setText('e-spreadmult', env.spreadMultiplier.toFixed(1)+'×');
+  setText('lbl-winddir', Math.round(env.windDir)+'°');
+  setText('lbl-windspd', env.windSpeed+' km/h');
+  setText('lbl-hum', env.humidity+'%');
+  setText('lbl-temp', env.temperature+'°C');
+  setText('lbl-spreadmult', env.spreadMultiplier.toFixed(1)+'×');
+  setText('lbl-spot', Math.round(env.spotProbability*100)+'%');
+}
+
+/* wiring inputs */
+function bindRange(id, cb){ document.getElementById(id).addEventListener('input', e=>{
+  cb(parseFloat(e.target.value));
+  // Operator-set conditions become the new replay baseline, so scrubbing
+  // reproduces what is on screen rather than snapping back to scenario defaults.
+  snapshotEnvBaseline();
+  updateEnvUI();
+}); }
+bindRange('in-winddir', v=>{ env.windDir=v; pushEvent('system','WIND SHIFT', 'Direction set to '+Math.round(v)+'°.'); });
+bindRange('in-windspd', v=>{ env.windSpeed=v; });
+bindRange('in-hum', v=>{ env.humidity=v; });
+bindRange('in-temp', v=>{ env.temperature=v; });
+bindRange('in-spreadmult', v=>{ env.spreadMultiplier=v/100; });
+bindRange('in-spot', v=>{ env.spotProbability=v/100; });
+
+let snapshots=[]; // {name, ts, env, manualClosed, firebreakSegments}
+function renderSnapshotList(){
+  const wrap = document.getElementById('snapshot-list');
+  if(!wrap) return;
+  if(snapshots.length===0){ wrap.innerHTML = '<p style="font-size:10.5px; color:var(--text-faint);">No snapshots saved this session.</p>'; return; }
+  wrap.innerHTML = snapshots.map((s,i)=>
+    '<div class="road-row" style="cursor:default;"><div class="top"><span class="name">'+s.name+'</span>'+
+    '<span class="meta">'+String(Math.floor(s.simTime/60)).padStart(2,'0')+':'+String(s.simTime%60).padStart(2,'0')+'</span></div>'+
+    '<div style="display:flex; gap:6px; margin-top:5px;">'+
+    '<button class="subtle-btn" style="margin:0; padding:5px;" data-snap-load="'+i+'">Load</button>'+
+    '<button class="subtle-btn danger" style="margin:0; padding:5px;" data-snap-del="'+i+'">Delete</button>'+
+    '</div></div>'
+  ).join('');
+  wrap.querySelectorAll('[data-snap-load]').forEach(b=>b.addEventListener('click', e=>{
+    const s = snapshots[parseInt(e.target.getAttribute('data-snap-load'))];
+    Object.assign(env, s.env);
+    roads.forEach((r,i)=>r.manualClosed = s.manualClosed[i] ?? false);
+    // reset and reapply firebreak geometry so world.intervention matches the snapshot
+    world.intervention.fill(1);
+    firebreakSegments = [];
+    (s.firebreakSegments||[]).forEach(seg=>{ firebreakSegments.push(seg); applyFirebreak(seg); });
+    updateEnvUI(); updateRoadStatuses(simTime); recomputeAllRoutes(false); recomputeMetrics(simTime); renderAll();
+    showToast('system','Snapshot Loaded','Restored "'+s.name+'".');
+  }));
+  wrap.querySelectorAll('[data-snap-del]').forEach(b=>b.addEventListener('click', e=>{
+    snapshots.splice(parseInt(e.target.getAttribute('data-snap-del')),1);
+    renderSnapshotList();
+  }));
+}
+document.getElementById('btn-randomize').addEventListener('click', ()=>{
+  SEED = Math.floor(Math.random()*100000); rng = mulberry32(SEED);
+  pushEvent('system','SEED RANDOMIZED','New stochastic seed: '+SEED+'.');
+});
+document.getElementById('btn-save').addEventListener('click', ()=>{
+  const nameInput = document.getElementById('in-snapname');
+  const name = (nameInput.value||'').trim() || ('Snapshot '+(snapshots.length+1));
+  snapshots.push({ name, ts:Date.now(), simTime, env:{...env}, firebreakSegments:[...firebreakSegments], manualClosed: roads.map(r=>r.manualClosed) });
+  nameInput.value='';
+  renderSnapshotList();
+  showToast('system','Scenario Saved','"'+name+'" stored for this session (in-memory only).');
+});
+
+/* =========================================================================
+   LOCATION PICKER (§48)
+   ========================================================================= */
+function renderLocationList(){
+  document.getElementById('location-list').innerHTML = SCENARIOS.map(s=>
+    '<div class="road-row" data-loc="'+s.id+'" style="'+(s.id===currentScenario.id?'border-color:var(--fire);':'')+'">'+
+    '<div class="top"><span class="name">'+s.name+'</span>'+(s.id===currentScenario.id?'<span class="badge THREATENED" style="background:rgba(255,107,53,0.16);">ACTIVE</span>':'')+'</div>'+
+    '<div class="meta">'+s.region+' · wind '+s.wind.dir+'°/'+s.wind.speed+'km/h · humidity '+s.humidity+'%</div>'+
+    '</div>'
+  ).join('') + '<p style="font-size:10px; color:var(--text-faint); margin-top:8px;">No live geocoding in this build — each location reseeds the same procedural terrain/road generator with a different seed and starting environment, so terrain shapes differ but are not real elevation data for that place.</p>';
+  document.querySelectorAll('[data-loc]').forEach(row=>row.addEventListener('click', ()=>{
+    const s = SCENARIOS.find(x=>x.id===row.getAttribute('data-loc'));
+    selectScenario(s);
+    document.getElementById('locationpanel').style.display='none';
+  }));
+}
+function selectScenario(s){
+  currentScenario = s;
+  SEED = s.seed; rng = mulberry32(SEED);
+  document.querySelector('#scenario-name b').textContent = s.name;
+  // A previous location's live weather/ignition results must never leak into
+  // this one -- clear them before resetScenario() runs, and let
+  // refreshLiveConditions() below (correctly generation-guarded) repopulate
+  // them for the new place if a fetch succeeds.
+  liveIgnitionCells = []; pendingLiveWeather = null; pendingLiveIgnitions = null;
+  liveStatus.weather = {state:'idle', detail:''}; liveStatus.fire = {state:'idle', detail:''};
+  resetScenario();
+  // Regression fix: this used to run resetScenario() first, then assign the
+  // new scenario's env values, then leave the OLD env as the scrub baseline
+  // -- resetScenario()'s own snapshotEnvBaseline() call had already fired
+  // before these values existed. Scrubbing after switching location would
+  // silently revert wind/humidity/temperature back to the previous place.
+  // Setting env + re-snapshotting the baseline together, after reset, fixes it.
+  Object.assign(env, { windDir:s.wind.dir, windSpeed:s.wind.speed, humidity:s.humidity, temperature:s.temperature });
+  snapshotEnvBaseline();
+  document.getElementById('in-winddir').value = s.wind.dir;
+  document.getElementById('in-windspd').value = s.wind.speed;
+  document.getElementById('in-hum').value = s.humidity;
+  document.getElementById('in-temp').value = s.temperature;
+  updateEnvUI();
+  updateRoadStatuses(simTime); recomputeAllRoutes(false); recomputeMetrics(simTime); renderAll();
+  showToast('system','Location Changed','Loaded '+s.name+' ('+s.region+').');
+  renderDataStatus(); updateTopBadges();
+  refreshLiveConditions();
+}
+document.getElementById('scenario-name').addEventListener('click', ()=>{ renderLocationList(); toggleFloater('locationpanel'); });
+
+/* =========================================================================
+   SCENARIO COMPARISON (§37)
+   ========================================================================= */
+let compareBaseline=null, compareCurrent=null;
+function captureCompareSnapshot(){
+  return {
+    windDir: Math.round(env.windDir), windSpeed: env.windSpeed, humidity: env.humidity, temperature: env.temperature,
+    simTime, fronts: countFireFronts(),
+    roadsThreatened: roads.filter(r=>r.status==='THREATENED'||r.status==='BLOCKED').length,
+    roadsBlocked: roads.filter(r=>r.status==='BLOCKED').length,
+    communitiesAffected: COMMUNITIES.filter(c=>{ const r=currentRoutes[c.id]; return !r || r.path.some(e=>{ const rt=roads.find(x=>x.id===e.id); return rt.status!=='SAFE'; }); }).length,
+    routesActive: COMMUNITIES.filter(c=>currentRoutes[c.id]).length,
+  };
+}
+function renderCompareTable(){
+  const wrap = document.getElementById('compare-table');
+  if(!compareBaseline && !compareCurrent){ wrap.innerHTML=''; return; }
+  const rows = [
+    ['Sim time', v=>'+'+String(Math.floor(v.simTime/60)).padStart(2,'0')+':'+String(v.simTime%60).padStart(2,'0')],
+    ['Wind', v=>v.windDir+'° · '+v.windSpeed+'km/h'],
+    ['Fire fronts', v=>v.fronts],
+    ['Roads threatened', v=>v.roadsThreatened],
+    ['Roads blocked', v=>v.roadsBlocked],
+    ['Communities affected', v=>v.communitiesAffected],
+    ['Routes active', v=>v.routesActive],
+  ];
+  wrap.innerHTML = '<div class="kv" style="border-bottom:1px solid var(--line-strong); font-weight:700;"><span class="k">Metric</span><span class="v" style="display:flex; gap:14px;"><span style="width:64px; text-align:right;">Baseline</span><span style="width:64px; text-align:right; color:var(--fire);">Compare</span></span></div>' +
+    rows.map(([label,fmt])=>{
+      const b = compareBaseline ? fmt(compareBaseline) : '—';
+      const c = compareCurrent ? fmt(compareCurrent) : '—';
+      return '<div class="kv"><span class="k">'+label+'</span><span class="v" style="display:flex; gap:14px;"><span style="width:64px; text-align:right;">'+b+'</span><span style="width:64px; text-align:right; color:var(--fire);">'+c+'</span></span></div>';
+    }).join('');
+}
+document.getElementById('btn-compare').addEventListener('click', ()=>toggleFloater('comparepanel'));
+document.getElementById('btn-capture-baseline').addEventListener('click', ()=>{
+  compareBaseline = captureCompareSnapshot(); renderCompareTable();
+  showToast('system','Baseline Captured','Current state stored as the comparison baseline.');
+});
+document.getElementById('btn-capture-current').addEventListener('click', ()=>{
+  compareCurrent = captureCompareSnapshot(); renderCompareTable();
+  showToast('system','Comparison Captured','Current state captured for side-by-side comparison.');
+});
+document.getElementById('btn-clear-compare').addEventListener('click', ()=>{
+  compareBaseline=null; compareCurrent=null; renderCompareTable();
+});
+
+/* floaters open/close */
+const ALL_FLOATERS = ['drawer','inspector','about','layerpanel','datastatus','locationpanel','comparepanel'];
+function toggleFloater(id){
+  const el = document.getElementById(id);
+  const willShow = el.style.display!=='block';
+  ALL_FLOATERS.forEach(x=>document.getElementById(x).style.display='none');
+  el.style.display = willShow ? 'block':'none';
+}
+function closeAllFloaters(){
+  ALL_FLOATERS.forEach(x=>document.getElementById(x).style.display='none');
+}
+document.getElementById('btn-drawer').addEventListener('click', ()=>{ renderSnapshotList(); toggleFloater('drawer'); });
+document.getElementById('btn-layers').addEventListener('click', ()=>toggleFloater('layerpanel'));
+document.getElementById('btn-about').addEventListener('click', ()=>toggleFloater('about'));
+document.getElementById('btn-data').addEventListener('click', ()=>{ renderDataStatus(); toggleFloater('datastatus'); });
+document.querySelectorAll('[data-close]').forEach(x=>x.addEventListener('click', e=>{
+  document.getElementById(e.currentTarget.getAttribute('data-close')).style.display='none';
+}));
+
+/* =========================================================================
+   KEYBOARD SHORTCUTS (§34) + ESCAPE-TO-CLOSE (§39)
+   Ignored while typing in a text input/textarea/select so shortcuts never
+   hijack the snapshot-name field or any future text entry.
+   ========================================================================= */
+function isTypingTarget(el){
+  if(!el) return false;
+  const tag = el.tagName;
+  return tag==='INPUT' || tag==='TEXTAREA' || tag==='SELECT' || el.isContentEditable;
+}
+window.addEventListener('keydown', e=>{
+  const appEntered = document.getElementById('app').style.display !== 'none';
+  if(!appEntered) return; // world/roads aren't built yet until "Enter Simulation"
+  if(e.key==='Escape'){
+    if(drawingFirebreak){
+      drawingFirebreak=false; firebreakDraft=[]; dragging=false;
+      const fbBtn = document.getElementById('btn-firebreak');
+      fbBtn.classList.remove('primary');
+      fbBtn.setAttribute('aria-pressed','false');
+      fbBtn.textContent='Add Firebreak';
+      document.getElementById('firebreak-hint').style.display='none';
+      drawInteract();
+    }
+    closeAllFloaters();
+    return;
+  }
+  if(isTypingTarget(e.target)) return;
+  switch(e.key){
+    case ' ': case 'Spacebar':
+      e.preventDefault(); togglePlayPause(); break;
+    case 'r': case 'R':
+      resetScenario(); break;
+    case 'd': case 'D':
+      document.getElementById('btn-demo').click(); break;
+    case 'l': case 'L':
+      toggleFloater('layerpanel'); break;
+    case 'e': case 'E':
+      renderSnapshotList(); toggleFloater('drawer'); break;
+    case 'i': case 'I': {
+      const insp = document.getElementById('inspector');
+      if(insp.style.display==='block') insp.style.display='none';
+      else if(document.getElementById('insp-body').innerHTML.trim()) toggleFloater('inspector');
+      break;
+    }
+    case 'ArrowRight':
+      e.preventDefault();
+      if(simTime<MAX_TL_MINUTES){ stepSimulation(); renderAll(); updateTimelineUI(); }
+      break;
+    case 'ArrowLeft':
+      e.preventDefault();
+      if(simTime>0) scrubToTime(Math.max(0, simTime-1));
+      break;
+  }
+});
+document.querySelectorAll('[data-layer]').forEach(chk=>{
+  chk.addEventListener('change', e=>{
+    const key = e.target.getAttribute('data-layer');
+    layers[key] = e.target.checked;
+    if(key==='thermalProxy') document.getElementById('hud-thermal').style.display = e.target.checked ? 'flex' : 'none';
+    drawTerrain(); renderAll();
+  });
+});
+
+/* =========================================================================
+   LIVE DATA ADAPTERS: NASA FIRMS + Open-Meteo
+   -------------------------------------------------------------------------
+   Two of the five sources in DATA_SOURCES are genuinely wired to real HTTP
+   calls; the other three (elevation, land cover, road network) stay on the
+   deterministic procedural generator. That split is deliberate, not
+   laziness: the fixed 72x72 grid, its road IDs, the ignition point, and the
+   guided demo's whole choreography are tuned against ONE specific synthetic
+   geometry. Swapping terrain/roads for real per-location data would mean
+   re-deriving that entire tuned scenario for wherever the data came from --
+   a different, much larger project. Weather and fire detections don't have
+   that problem: they're real conditions at a real point, and they feed
+   straight into the existing grid's env/ignition inputs without touching
+   its geometry.
+
+   Every fetch degrades to the cached scenario on ANY failure (network,
+   CORS, timeout, bad/missing key, no detections found) and says exactly
+   why in the data-source panel -- never silently, never claiming LIVE for
+   data that didn't arrive. This mirrors the project's own standing rule:
+   observed / retrieved / cached / simulated must stay distinguishable.
+   ========================================================================= */
+const EARTH_KM_PER_DEG_LAT = 111.32;
+/** Real km-per-cell span used for weather/fire queries only -- independent
+ *  of, and does not resize, the procedural grid. */
+const LIVE_BOX_KM = GRID*CELL_KM; // 18km, matches the existing grid's own scale
+
+/** Grid (i,j) -> real lat/lon, anchored at the given scenario's coordinates. */
+function gridToLatLon(i, j, scn){
+  const dxKm = (i - GRID/2) * CELL_KM;
+  const dyKm = (GRID/2 - j) * CELL_KM; // smaller j = further north, matches canvas "up"
+  const lat = scn.lat + dyKm/EARTH_KM_PER_DEG_LAT;
+  const lon = scn.lon + dxKm/(EARTH_KM_PER_DEG_LAT*Math.cos(deg2rad(scn.lat)));
+  return [lat, lon];
+}
+/** Real lat/lon -> grid (i,j) for the given scenario's anchor, or null if the
+ *  point falls outside the grid's real-world footprint. */
+function latLonToGrid(lat, lon, scn){
+  const dyKm = (lat - scn.lat) * EARTH_KM_PER_DEG_LAT;
+  const dxKm = (lon - scn.lon) * EARTH_KM_PER_DEG_LAT * Math.cos(deg2rad(scn.lat));
+  const i = Math.round(GRID/2 + dxKm/CELL_KM);
+  const j = Math.round(GRID/2 - dyKm/CELL_KM);
+  if(i<0||j<0||i>=GRID||j>=GRID) return null;
+  return [i,j];
+}
+function liveBBox(scn){
+  const half = (LIVE_BOX_KM/2) * 1.05; // slight margin so edge cells are covered
+  const dLat = half/EARTH_KM_PER_DEG_LAT;
+  const dLon = half/(EARTH_KM_PER_DEG_LAT*Math.cos(deg2rad(scn.lat)));
+  return { west:scn.lon-dLon, east:scn.lon+dLon, south:scn.lat-dLat, north:scn.lat+dLat };
+}
+function fetchWithTimeout(url, ms){
+  const ctrl = new AbortController();
+  const timer = setTimeout(()=>ctrl.abort(), ms);
+  return fetch(url, {signal:ctrl.signal}).finally(()=>clearTimeout(timer));
+}
+
+/** Open-Meteo current conditions. No API key; documented CORS support. */
+async function fetchLiveWeather(scn){
+  const url = 'https://api.open-meteo.com/v1/forecast?latitude='+scn.lat+'&longitude='+scn.lon+
+    '&current=temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m'+
+    '&wind_speed_unit=kmh&temperature_unit=celsius&timezone=auto';
+  const res = await fetchWithTimeout(url, 6000);
+  if(!res.ok) throw new Error('HTTP '+res.status);
+  const j = await res.json();
+  const c = j.current;
+  if(!c || typeof c.wind_direction_10m !== 'number') throw new Error('unexpected response shape');
+  return {
+    windDir: clamp(Math.round(c.wind_direction_10m), 0, 359),
+    windSpeed: clamp(Math.round(c.wind_speed_10m), 0, 80),
+    humidity: clamp(Math.round(c.relative_humidity_2m), 0, 100),
+    temperature: clamp(Math.round(c.temperature_2m), 0, 48),
+    fetchedAt: new Date().toISOString(),
+  };
+}
+
+/** NASA FIRMS active-fire detections in the last 24h within the scenario's
+ *  real footprint. Goes through EMBER's own /api/firms function (api/firms.js),
+ *  which holds the FIRMS MAP_KEY server-side (env var FIRMS_MAP_KEY) -- there
+ *  is no key in this file, in localStorage, or anywhere in the browser. Where
+ *  that function isn't deployed (file://, plain static hosting) the fetch
+ *  fails and the app falls back to the cached scenario, labeled as such. */
+async function fetchLiveFireDetections(scn){
+  const bb = liveBBox(scn);
+  const url = '/api/firms?west='+bb.west.toFixed(4)+'&south='+bb.south.toFixed(4)+
+    '&east='+bb.east.toFixed(4)+'&north='+bb.north.toFixed(4);
+  const res = await fetchWithTimeout(url, 8000);
+  if(!res.ok){
+    let why = 'HTTP '+res.status;
+    try{ const j = await res.json(); if(j && j.error) why = j.error; }catch(e){}
+    throw new Error(why);
+  }
+  const text = await res.text();
+  if(/invalid/i.test(text) && text.length<200) throw new Error('FIRMS rejected the request');
+  const lines = text.trim().split('\n');
+  if(lines.length<1) return [];
+  const header = lines[0].split(',').map(h=>h.trim().toLowerCase());
+  const latI = header.indexOf('latitude'), lonI = header.indexOf('longitude');
+  if(latI<0||lonI<0) throw new Error('unexpected CSV shape');
+  const points = [];
+  for(let k=1;k<lines.length;k++){
+    const cols = lines[k].split(',');
+    if(cols.length<=Math.max(latI,lonI)) continue;
+    const lat = parseFloat(cols[latI]), lon = parseFloat(cols[lonI]);
+    if(!isFinite(lat)||!isFinite(lon)) continue;
+    points.push([lat,lon]);
+  }
+  return points;
+}
+
+// Older builds asked each visitor to paste a FIRMS key, kept in localStorage. The key is
+// server-side now, so drop any leftover copy from this browser.
+try{ localStorage.removeItem('ember_firms_key'); }catch(e){}
+
+/** Live-fetch status per source, for the data panel and top-bar badge.
+ *  Each entry is {state:'idle'|'pending'|'live'|'cached', detail:string}. */
+const liveStatus = {
+  weather: {state:'idle', detail:''},
+  fire:    {state:'idle', detail:''},
+};
+/** Monotonic generation counter. A fetch started for scenario generation N
+ *  that resolves after the user has already switched to generation N+1 is
+ *  discarded rather than applied -- prevents a slow Sierra Foothills weather
+ *  response from landing on top of a Front Range scenario the user already
+ *  switched to. */
+let liveGeneration = 0;
+
+/**
+ * Kick off both live fetches for the current scenario. Resolves when both
+ * have settled (success or failure); never throws. Only APPLIES results if:
+ *   - this is still the current scenario generation (no race), and
+ *   - the simulation hasn't been advanced yet (simTime===0, !running) --
+ *     live conditions should never yank the wind out from under a run the
+ *     user is already watching.
+ * If the simulation HAS advanced, results are still fetched and shown as
+ * available in the panel, but only take effect on the next reset/location
+ * change, exactly like any other "apply on reset" scenario input.
+ */
+async function refreshLiveConditions(){
+  const gen = ++liveGeneration;
+  const scn = currentScenario;
+  liveStatus.weather = {state:'pending', detail:'contacting Open-Meteo…'};
+  liveStatus.fire = {state:'pending', detail:'contacting NASA FIRMS…'};
+  renderDataStatus();
+
+  const [wx, fx] = await Promise.allSettled([
+    fetchLiveWeather(scn),
+    fetchLiveFireDetections(scn),
+  ]);
+  if(gen !== liveGeneration) return; // superseded by a newer scenario/location
+
+  if(wx.status === 'fulfilled'){
+    liveStatus.weather = {state:'live', detail:'Open-Meteo, '+scn.lat.toFixed(2)+','+scn.lon.toFixed(2)+' — fetched '+new Date(wx.value.fetchedAt).toLocaleTimeString()};
+    pendingLiveWeather = wx.value;
+  } else {
+    liveStatus.weather = {state:'cached', detail:'live fetch failed: '+wx.reason.message};
+    pendingLiveWeather = null;
+  }
+
+  if(fx.status === 'fulfilled'){
+    const cells = fx.value.map(([lat,lon])=>latLonToGrid(lat,lon,scn)).filter(Boolean);
+    if(cells.length){
+      liveStatus.fire = {state:'live', detail:cells.length+' real VIIRS detection(s) in this 18km box in the last 24h'};
+      pendingLiveIgnitions = cells;
+    } else {
+      liveStatus.fire = {state:'live', detail:'0 active detections in this 18km box in the last 24h — using tuned scenario ignition'};
+      pendingLiveIgnitions = [];
+    }
+  } else {
+    liveStatus.fire = {state:'cached', detail:'live fetch failed: '+fx.reason.message};
+    pendingLiveIgnitions = null;
+  }
+
+  const canApplyNow = (simTime===0 && !running);
+  renderDataStatus();
+  if(canApplyNow) applyPendingLiveConditions();
+  updateTopBadges();
+}
+let pendingLiveWeather = null, pendingLiveIgnitions = null;
+/** Ignitions must be applied BEFORE seedIgnitions(0) runs in resetScenario --
+ *  a plain assignment, safe to call at any point. */
+function applyPendingIgnitions(){
+  if(pendingLiveIgnitions !== null) liveIgnitionCells = pendingLiveIgnitions;
+}
+/** Weather must be applied AFTER resetScenario's own restoreEnvBaseline()
+ *  call, or that call overwrites the live values with the old baseline --
+ *  and it must re-snapshot the baseline afterward so scrubbing preserves the
+ *  live conditions instead of reverting to the scenario's static defaults. */
+function applyPendingWeather(){
+  if(!pendingLiveWeather) return;
+  Object.assign(env, pendingLiveWeather);
+  snapshotEnvBaseline();
+  document.getElementById('in-winddir').value = env.windDir;
+  document.getElementById('in-windspd').value = env.windSpeed;
+  document.getElementById('in-hum').value = env.humidity;
+  document.getElementById('in-temp').value = env.temperature;
+  updateEnvUI();
+}
+/** Convenience: apply whatever's pending, in the safe order, for callers
+ *  outside resetScenario (e.g. a fetch that resolves while the sim is idle). */
+function applyPendingLiveConditions(){
+  applyPendingIgnitions();
+  restoreEnvBaseline();   // no-op if nothing pending changes vs current baseline
+  applyPendingWeather();
+}
+function updateTopBadges(){
+  const live = document.getElementById('live-label'), dot = document.getElementById('dot-live'), hud = document.getElementById('hud-mode');
+  const wxLive = liveStatus.weather.state==='live', fireLive = liveStatus.fire.state==='live' && liveIgnitionCells.length>0;
+  let label;
+  if(wxLive && fireLive) label = 'LIVE WEATHER + LIVE DETECTIONS';
+  else if(wxLive) label = 'LIVE WEATHER · CACHED IGNITION';
+  else label = 'CACHED SCENARIO';
+  if(live) live.textContent = label;
+  if(dot) dot.className = 'dot ' + (wxLive||fireLive ? 'on' : 'warn');
+  if(hud) hud.textContent = label;
+}
+
+const DATA_SOURCES = [
+  {name:'NASA FIRMS', role:'Active fire detections (ignition seeds)', key:'fire', live:true},
+  {name:'Open-Meteo', role:'Wind, temperature, humidity', key:'weather', live:true},
+  {name:'USGS 3DEP Terrain', role:'Elevation → slope / aspect', live:false,
+    reason:'Terrain drives the tuned demo\'s slope model and firebreak geometry; swapping to real per-location elevation would require re-deriving the whole scenario, not just this layer.'},
+  {name:'ESA WorldCover', role:'Land cover → fuel proxy', live:false,
+    reason:'Land cover requires raster/tile parsing beyond this dependency-light client; left procedural rather than faked.'},
+  {name:'OpenStreetMap / Overpass', role:'Road network & communities', live:false,
+    reason:'The road IDs, evacuation graph and guided demo are all keyed to this fixed network; a real road network for an arbitrary place would break that choreography.'},
+];
+function statusBadge(state){
+  if(state==='live') return '<span class="badge SAFE" style="background:rgba(47,217,138,0.14); color:var(--safe);">LIVE</span>';
+  if(state==='pending') return '<span class="badge WATCH" style="background:rgba(245,194,68,0.14); color:var(--watch);">FETCHING…</span>';
+  return '<span class="badge WATCH" style="background:rgba(245,194,68,0.14); color:var(--watch);">CACHED</span>';
+}
+function renderDataStatus(){
+  document.getElementById('datastatus-body').innerHTML = DATA_SOURCES.map(s=>{
+    const st = s.live ? liveStatus[s.key] : {state:'cached', detail:s.reason};
+    return '<div class="src-row"><span>'+s.name+'<br><span style="color:var(--text-faint); font-size:10px;">'+s.role+'</span>'+
+      '<br><span style="color:var(--text-faint); font-size:9.5px;">'+st.detail+'</span></span>'+
+      statusBadge(st.state)+'</div>';
+  }).join('') +
+  '<div style="margin-top:10px; padding-top:10px; border-top:1px solid var(--line);">'+
+    '<div class="flabel" style="margin-bottom:4px;"><span>NASA FIRMS API key</span></div>'+
+    '<p style="font-size:10.5px; color:var(--text-dim);">An API key is already in use — EMBER queries NASA FIRMS with its own key on the server, so there is nothing to enter here.</p>'+
+    '<p style="font-size:10px; color:var(--text-faint); margin-top:6px;">Open-Meteo above needs no key. USGS/ESA/OSM stay cached for the reason shown — see README.</p>'+
+  '</div>';
+  document.getElementById('mini-sources').innerHTML = DATA_SOURCES.map(s=>{
+    const st = s.live ? liveStatus[s.key] : {state:'cached'};
+    return '<div style="display:flex; justify-content:space-between;"><span>'+s.name+'</span><span style="color:'+(st.state==='live'?'var(--safe)':'var(--watch)')+';">'+(st.state==='live'?'●':'○')+'</span></div>';
+  }).join('');
+}
+
+/* =========================================================================
+   9. TIMELINE / PLAYBACK
+   ========================================================================= */
+const SPEEDS = [0.5,1,2,5,10];
+function buildSpeedButtons(){
+  const g = document.getElementById('speedgroup');
+  g.innerHTML='';
+  SPEEDS.forEach(s=>{
+    const b = document.createElement('button');
+    b.className='speedbtn'+(s===speed?' active':'');
+    b.textContent = s+'×';
+    b.addEventListener('click', ()=>{ speed=s; buildSpeedButtons(); });
+    g.appendChild(b);
+  });
+}
+function togglePlayPause(){
+  running = !running;
+  const btn = document.getElementById('btn-playpause');
+  btn.textContent = running?'❚❚':'▶';
+  btn.setAttribute('aria-pressed', running?'true':'false');
+  setText('sim-status-text', running?'SIMULATION ACTIVE':(simTime>=MAX_TL_MINUTES?'SIMULATION COMPLETE':'SIMULATION PAUSED'));
+  document.getElementById('dot-sim').className = 'dot '+(running?'on':'off');
+}
+document.getElementById('btn-playpause').addEventListener('click', togglePlayPause);
+document.getElementById('btn-step').addEventListener('click', ()=>{ stepSimulation(); renderAll(); updateTimelineUI(); });
+function resetScenario(){
+  // Reseed the PRNG. Without this the second run of a scenario diverged from
+  // the first, so "reset and compare" produced meaningless deltas and the
+  // guided demo was not actually reproducible.
+  rng = mulberry32(SEED);
+  world = buildWorld(SEED);
+  applyPendingIgnitions();  // must land before seedIgnitions() reads liveIgnitionCells
+  seedIgnitions(0);
+  simTime=0; running=false; lastRoadStatuses={}; firebreakSegments=[]; currentRoutes={}; roadPulseUntil={};
+  interventions = []; announcedSpots = []; demo.fired = {}; stopDemo();
+  clearEventFeed();
+  restoreEnvBaseline(); snapshotEnvBaseline();
+  applyPendingWeather();   // must land AFTER restoreEnvBaseline(), which would otherwise overwrite it
+  fireDisplay = null; invalidateFireField();
+  buildRoadGraph();
+  updateRoadStatuses(0); recomputeAllRoutes(false); recomputeMetrics(0);
+  document.getElementById('btn-playpause').textContent='▶';
+  document.getElementById('btn-playpause').setAttribute('aria-pressed','false');
+  setText('sim-status-text','SIMULATION PAUSED');
+  document.getElementById('dot-sim').className='dot off';
+  drawTerrain(); renderAll(); updateTimelineUI();
+  document.getElementById('inspector').style.display='none';
+  selectedMarker=null;
+  updateEnvUI();
+  const usedLiveIgnition = liveIgnitionCells.length>0;
+  const usedLiveWeather = liveStatus.weather.state==='live';
+  pushEvent('system','SCENARIO INITIALIZED',
+    (usedLiveIgnition ? liveIgnitionCells.length+' live NASA FIRMS detection(s)' : DEFAULT_IGNITIONS.length+' cached detection(s)')+
+    ' seeded, '+(usedLiveWeather?'live Open-Meteo conditions':'cached scenario conditions')+'. '+
+    roads.filter(r=>r.status==='SAFE').length+'/'+roads.length+' corridors SAFE, '+
+    COMMUNITIES.filter(c=>currentRoutes[c.id]).length+'/'+COMMUNITIES.length+' communities with a valid evacuation route.');
+  updateTopBadges();
+}
+document.getElementById('btn-reset').addEventListener('click', resetScenario);
+document.getElementById('btn-reset2').addEventListener('click', resetScenario);
+
+function updateTimelineUI(){
+  const pct = clamp(simTime/MAX_TL_MINUTES,0,1)*100;
+  document.getElementById('tl-progress').style.width = pct+'%';
+  document.getElementById('tl-handle').style.left = pct+'%';
+  document.getElementById('tl-history').style.width = pct+'%';
+  const hh=String(Math.floor(simTime/60)).padStart(2,'0'), mm=String(simTime%60).padStart(2,'0');
+  const wrap = document.getElementById('tl-track-wrap');
+  wrap.setAttribute('aria-valuenow', String(simTime));
+  wrap.setAttribute('aria-valuetext', '+'+hh+':'+mm+' elapsed');
+}
+let scrubbing=false;
+document.getElementById('tl-handle').addEventListener('mousedown', ()=>{ scrubbing=true; running=false; });
+window.addEventListener('mouseup', ()=>{ scrubbing=false; });
+document.getElementById('tl-track-wrap').addEventListener('mousemove', e=>{
+  if(!scrubbing) return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const t = clamp((e.clientX-rect.left)/rect.width,0,1)*MAX_TL_MINUTES;
+  scrubToTime(Math.round(t));
+});
+document.getElementById('tl-track-wrap').addEventListener('mousedown', e=>{
+  if(e.target.id==='tl-handle') return;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const t = clamp((e.clientX-rect.left)/rect.width,0,1)*MAX_TL_MINUTES;
+  scrubToTime(Math.round(t));
+});
+/**
+ * Deterministic re-simulation from t=0 to `target`.
+ *
+ * Interventions are replayed from the ledger rather than being lost: the env
+ * is rolled back to the scenario baseline and each recorded wind shift /
+ * spotting change / firebreak is re-applied on the exact minute it was
+ * originally made. Scrubbing backwards past a firebreak therefore genuinely
+ * un-does it, and scrubbing forward re-cuts it -- the map state always matches
+ * the time on the timeline. No wall-clock callback survives a scrub, because
+ * there are none.
+ */
+function scrubToTime(target){
+  const manual = {}; for(const r of (roads||[])) manual[r.id]=r.manualClosed;
+  rng = mulberry32(SEED);
+  world = buildWorld(SEED);
+  seedIgnitions(0);
+  simTime=0; lastRoadStatuses={}; currentRoutes={}; roadPulseUntil={};
+  // Both reset and scrub re-run the engine from t=0, so both must clear the
+  // event log/feed/timeline-markers before replaying, or every scrub doubled
+  // the entire event history on top of what was already there.
+  clearEventFeed();
+  buildRoadGraph();
+  for(const r of roads) r.manualClosed = !!manual[r.id];
+  for(const iv of interventions) iv.live=false;
+  announcedSpots = [];
+  restoreEnvBaseline();
+  firebreakSegments = [];
+  for(let k=0;k<target;k++) stepSimulation();
+  // Re-assert ledger state for the final time slice (covers target===0 and any
+  // intervention recorded at minute 0).
+  replayInterventions(target);
+  updateRoadStatuses(simTime); recomputeAllRoutes(false); recomputeMetrics(simTime);
+  updateEnvUI();
+  fireDisplay = null; invalidateFireField();
+  renderAll(); updateTimelineUI();
+}
+
+/* =========================================================================
+   10. GUIDED DEMO MODE
+   ========================================================================= */
+/*
+ * The guided demo used to be three setTimeout() calls at 16s / 34s / 70s of
+ * WALL-CLOCK time. Because the simulation reached its horizon in under four
+ * real seconds, every one of those callbacks fired into an already-frozen
+ * world: the wind shift changed a number nothing would ever read again, and
+ * the firebreak was cut into terrain the fire had stopped advancing through.
+ * The causal chain the demo exists to show never actually ran.
+ *
+ * The script below is addressed in SIMULATED MINUTES and is consumed from
+ * stepSimulation(), so it is automatically correct under pause, speed change,
+ * scrub and reset. Each beat either (a) records a real intervention in the
+ * ledger, or (b) narrates using values read back out of the live simulation.
+ * No beat fakes a road status, a route, or a number.
+ *
+ * Beat times were chosen by running the real engine headlessly against this
+ * exact scenario and reading off when things actually happen.
+ */
+const DEMO_SCRIPT = [
+  { at:1,  kind:'system', title:'OBSERVING',
+    detail:()=>'Single confirmed detection. All '+roads.length+' corridors currently SAFE. Watching for propagation.' },
+  { at:8,  kind:'system', title:'FIRE ESTABLISHED',
+    detail:()=>{ const a=activeCellCount(); return a+' cells actively burning across '+countFireFronts()+' front(s). Nearest corridor: '+nearestCorridorText()+'.'; } },
+  { at:18, kind:'event',  title:'WIND SHIFT',
+    toast:['event','Wind Shift','Propagation vector changes — watch the front turn.'],
+    apply:()=>recordIntervention({ at:18, type:'wind', data:{dir:330, speed:58}, live:true }),
+    detail:()=>'Wind 315°/24 km/h → 330°/58 km/h. Downwind spread multiplier rises to '+windFactorFor(Math.sin(deg2rad(windTravelBearing())),-Math.cos(deg2rad(windTravelBearing()))).toFixed(2)+'×.' },
+  { at:30, kind:'event',  title:'SPOTTING RISK RAISED',
+    apply:()=>recordIntervention({ at:30, type:'spotting', data:{value:0.60}, live:true }),
+    detail:()=>'Ember spotting probability 0.35 → 0.60 under the new wind. Expect ignitions ahead of the main front.' },
+  { at:42, kind:'system', title:'FRONT ASSESSMENT',
+    detail:()=>{ const spots=spotCellCount(); const at=roads.filter(r=>r.status!=='SAFE');
+      return countFireFronts()+' separate front(s) tracked, '+spots+' cell(s) ignited by ember spotting. '+
+             at.length+' corridor(s) off SAFE: '+(at.map(r=>r.name+' '+r.status).join(', ')||'none')+'.'; } },
+  { at:52, kind:'firebreak', title:'FIREBREAK DEPLOYED',
+    toast:['firebreak','Firebreak Deployed','5-cell containment line across the corridor approach.'],
+    apply:()=>{ recordIntervention({ at:52, type:'firebreak', data:{pts:DEMO_FIREBREAK, halfWidth:2}, live:true });
+                for(let k=0;k<DEMO_FIREBREAK.length-1;k++) firebreakSegments.push([DEMO_FIREBREAK[k],DEMO_FIREBREAK[k+1]]); },
+    detail:()=>'Containment line cut '+DEMO_FIREBREAK[0].join(',')+' → '+DEMO_FIREBREAK[1].join(',')+'. Propagation multiplier in those cells set to 0.03.' },
+  { at:90, kind:'system', title:'SEQUENCE COMPLETE',
+    detail:()=>{ const burned=burnedCellCount(), spots=spotCellCount();
+      const blocked=roads.filter(r=>r.status==='BLOCKED').length;
+      const iso=COMMUNITIES.filter(c=>!currentRoutes[c.id]).length;
+      return burned+' cells burned, '+spots+' from ember spotting. '+blocked+' corridor(s) blocked, '+iso+' community/communities without a route. Use Compare to measure the firebreak against a no-intervention run.'; } },
+];
+const DEMO_FIREBREAK = [[26,38],[42,58]];
+
+function activeCellCount(){ return world.activeList.length; }
+function burnedCellCount(){ let n=0; for(let k=0;k<world.state.length;k++) if(world.state[k]) n++; return n; }
+function spotCellCount(){ let n=0; for(let k=0;k<world.isSpot.length;k++) if(world.isSpot[k]) n++; return n; }
+function nearestCorridorText(){
+  let best=null; for(const r of roads) if(!best || r.minDist<best.minDist) best=r;
+  return best ? best.name+' at '+gridToKm(best.minDist).toFixed(2)+' km' : 'n/a';
+}
+
+const demo = { active:false, fired:{} };
+
+function demoOnMinute(t){
+  for(let k=0;k<DEMO_SCRIPT.length;k++){
+    const beat = DEMO_SCRIPT[k];
+    if(beat.at!==t || demo.fired[k]) continue;
+    demo.fired[k]=true;
+    if(beat.apply) beat.apply();
+    pushEvent(beat.kind, beat.title, beat.detail(), {demoBeat:true, beatIndex:k});
+    if(beat.toast) showToast(beat.toast[0], beat.toast[1], beat.toast[2]);
+    if(beat.apply) updateEnvUI();
+    if(k===DEMO_SCRIPT.length-1) stopDemo();
+  }
+}
+function stopDemo(){
+  demo.active=false;
+  const b=document.getElementById('btn-demo');
+  if(b){ b.textContent='Guided Demo'; b.setAttribute('aria-pressed','false'); b.classList.remove('primary'); }
+}
+function startDemo(){
+  resetScenario();
+  demo.active=true; demo.fired={};
+  running=true;
+  document.getElementById('btn-playpause').textContent='\u275a\u275a';
+  document.getElementById('btn-playpause').setAttribute('aria-pressed','true');
+  setText('sim-status-text','SIMULATION ACTIVE');
+  document.getElementById('dot-sim').className='dot on';
+  speed=1; buildSpeedButtons();
+  const b=document.getElementById('btn-demo');
+  b.textContent='Stop Demo'; b.setAttribute('aria-pressed','true'); b.classList.add('primary');
+  showToast('system','Guided Demo Running','~70s at 1\u00d7. Every event is triggered by simulated time, not a stopwatch \u2014 pause, scrub or change speed freely.');
+}
+document.getElementById('btn-demo').addEventListener('click', ()=>{
+  if(demo.active){ stopDemo(); return; }
+  startDemo();
+});
+
+/* =========================================================================
+   11. MAIN LOOP
+   ========================================================================= */
+/*
+ * Simulation ticking and rendering are decoupled. The engine advances at most
+ * once per TICK_MS/speed (one tick == one simulated minute), while the canvas
+ * redraws every animation frame so the eased fire field, ember pulses and wind
+ * flow animate smoothly even at 700ms/tick. DOM-touching work is confined to
+ * tick boundaries.
+ */
+let lastFrameAt = 0;
+function loop(now){
+  const dt = lastFrameAt ? Math.min(now-lastFrameAt, 100) : 16;
+  lastFrameAt = now;
+  if(running && simTime<MAX_TL_MINUTES){
+    if(now-lastTickAt > TICK_MS/speed){
+      stepSimulation();
+      renderAll(); updateTimelineUI();
+      lastTickAt = now;
+    }
+  } else if(running && simTime>=MAX_TL_MINUTES){
+    running=false;
+    if(demo.active) stopDemo();
+    document.getElementById('btn-playpause').textContent='▶';
+    document.getElementById('btn-playpause').setAttribute('aria-pressed','false');
+    setText('sim-status-text','SIMULATION COMPLETE');
+    document.getElementById('dot-sim').className='dot off';
+  }
+  if(world){
+    advanceFireDisplay(prefersReducedMotion ? 1000 : dt);
+    if(!prefersReducedMotion || running) renderCanvas();
+    windPhase += dt * (0.00016*env.windSpeed + 0.004);
+  }
+  requestAnimationFrame(loop);
+}
+
+/* =========================================================================
+   12. BOOT SEQUENCE
+   ========================================================================= */
+const BOOT_ITEMS = ['Terrain loaded','Land cover loaded','Weather loaded','Fire observations loaded','Road network loaded','Simulation initialized'];
+function runBoot(){
+  const listEl = document.getElementById('boot-list');
+  BOOT_ITEMS.forEach((txt,i)=>{
+    const row = document.createElement('div'); row.className='cl-item'; row.id='cl-'+i;
+    row.innerHTML = '<span>'+txt+'</span><span class="ck">—</span>';
+    listEl.appendChild(row);
+  });
+  // Kick off the real Open-Meteo / NASA FIRMS fetches immediately, in
+  // parallel with the boot animation, so results are usually ready by the
+  // time the checklist finishes. WEATHER_ROW/FIRE_ROW below get annotated
+  // with the true outcome; every other row stays what it always was --
+  // deterministic and cached -- because that's the honest description of
+  // where terrain/land cover/roads come from in this build.
+  const liveConditionsPromise = refreshLiveConditions();
+  const WEATHER_ROW = BOOT_ITEMS.indexOf('Weather loaded');
+  const FIRE_ROW = BOOT_ITEMS.indexOf('Fire observations loaded');
+  let i=0;
+  const iv = setInterval(()=>{
+    if(i>=BOOT_ITEMS.length){
+      clearInterval(iv);
+      // Bounded wait for the live fetches: never hold the whole app hostage
+      // to a slow or absent network. The deterministic scenario underneath
+      // is always fully ready regardless of how this resolves.
+      Promise.race([liveConditionsPromise, new Promise(r=>setTimeout(r,2500))]).then(()=>{
+        annotateBootRow(WEATHER_ROW, liveStatus.weather);
+        annotateBootRow(FIRE_ROW, liveStatus.fire);
+        setTimeout(finishBoot, 260);
+      });
+      return;
+    }
+    const row=document.getElementById('cl-'+i);
+    row.classList.add('done'); row.querySelector('.ck').textContent='✓';
+    i++;
+  }, 220);
+}
+function annotateBootRow(i, status){
+  const row = document.getElementById('cl-'+i);
+  if(!row) return;
+  const ck = row.querySelector('.ck');
+  row.classList.add('done');
+  if(status.state==='live'){ ck.textContent='✓ LIVE'; ck.style.color='var(--safe)'; }
+  else { ck.textContent='✓ cached'; }
+}
+function finishBoot(){
+  document.getElementById('boot').classList.add('hide');
+  setTimeout(()=>{ document.getElementById('boot').style.display='none'; }, 420);
+}
+document.getElementById('btn-enter').addEventListener('click', ()=>{
+  document.getElementById('welcome').style.display='none';
+  document.getElementById('app').style.display='flex';
+  // resizeCanvases() must run BEFORE resetScenario(): resetScenario() ends
+  // with its own drawTerrain()/renderAll() call, and if the canvases are
+  // still at their pre-layout size (or the browser hasn't reflowed #app's
+  // display:flex yet) at that moment, terrain draws at the wrong scale onto
+  // canvases that get resized (and only then correctly redrawn) a moment
+  // later. Usually invisible; occasionally not, depending on browser/timing.
+  resizeCanvases();
+  resetScenario();
+  renderAll();
+  requestAnimationFrame(loop);
+  // Defensive: force one more resize+redraw a frame later, in case the
+  // browser hadn't finished laying out #app at the moment of the click
+  // above (a live-demo-safe belt-and-braces fix, not a normal code path).
+  requestAnimationFrame(()=>{ resizeCanvases(); renderAll(); });
+});
+document.getElementById('btn-fullscreen').addEventListener('click', ()=>{
+  if(!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{});
+  else document.exitFullscreen();
+});
+window.addEventListener('resize', resizeCanvases);
+
+/* =========================================================================
+   13. INIT
+   ========================================================================= */
+/** Build the timeline's minute labels and aria bounds from MAX_TL_MINUTES,
+ *  once at startup. These used to be hardcoded for a 30-minute horizon and
+ *  silently went stale (aria-valuemax="30", labels reading up to "30:00")
+ *  when the horizon was retuned to 100 minutes. */
+function initTimelineChrome(){
+  document.getElementById('tl-track-wrap').setAttribute('aria-valuemax', String(MAX_TL_MINUTES));
+  const ticksEl = document.querySelector('.tl-ticks');
+  ticksEl.innerHTML = '';
+  const steps = 6;
+  for(let k=0;k<=steps;k++){
+    const t = Math.round(MAX_TL_MINUTES*k/steps);
+    const hh=String(Math.floor(t/60)).padStart(2,'0'), mm=String(t%60).padStart(2,'0');
+    const span = document.createElement('span');
+    span.textContent = hh+':'+mm;
+    ticksEl.appendChild(span);
+  }
+}
+initTimelineChrome();
+buildSpeedButtons();
+updateEnvUI();
+renderDataStatus();
+runBoot();
+
+})();
+</script>
+</body>
+</html>

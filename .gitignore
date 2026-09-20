@@ -1,0 +1,8 @@
+# Secrets: the NASA FIRMS key belongs in Vercel's Environment Variables
+# (and .env.local for `vercel dev`), never in git.
+.env
+.env.*
+!.env.example
+.vercel
+node_modules
+.DS_Store

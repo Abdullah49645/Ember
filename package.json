@@ -1,0 +1,15 @@
+{
+  "name": "ember",
+  "version": "0.1.0",
+  "description": "Wildfire propagation simulation coupled to an adaptive evacuation network.",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "npm run test:engine && npm run test:behaviour && npm run test:api",
+    "test:engine": "node packages/simulation/engine.test.js",
+    "test:behaviour": "node packages/simulation/behaviour.test.js",
+    "test:api": "node tools/firms-proxy.test.js",
+    "dev": "node tools/dev-server.js"
+  },
+  "dependencies": {}
+}

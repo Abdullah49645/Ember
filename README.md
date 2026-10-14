@@ -2,8 +2,7 @@
 
 A live environmental simulation coupled to an adaptive evacuation network.
 
-**Built for NextStep Hacks 2026 — Earth Forward (track: HackAlphaX).** The
-brief was to connect environmental data to a real infrastructure decision —
+The brief was to connect environmental data to a real infrastructure decision —
 Ember's answer is a wildfire that actually changes which roads are safe and
 actually reroutes people around it, rather than a map with a fire animation
 layered on top.
